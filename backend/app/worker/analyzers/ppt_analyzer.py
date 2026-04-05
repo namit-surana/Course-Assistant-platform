@@ -130,9 +130,9 @@ def analyze_ppt(ppt_path: str, rubric_criteria: list[dict[str, Any]]) -> dict[st
         )
 
         llm = LLM(
-            model="gemini/gemini-1.5-pro",
-            api_key=settings.GEMINI_API_KEY,
-        )
+                model="gemini-2.5-flash",
+                api_key=settings.GEMINI_API_KEY,
+            )
 
         ppt_analyzer_agent = Agent(
             role="PPT Analyzer",
