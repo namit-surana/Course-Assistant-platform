@@ -1,0 +1,206 @@
+task1_grouping:
+  agent: tree_analysis_agent
+  expected_output: |
+    {
+      "repo_type": "backend_service | frontend_app | full_stack_app | monorepo | library | infra_repo | hybrid_tooling_repo",
+      "groups": {
+        "overview_docs": ["..."],
+        "frontend": ["..."],
+        "backend": ["..."],
+        "database_schema": ["..."],
+        "workers": ["..."],
+        "integrations": ["..."],
+        "config_env": ["..."],
+        "build_dependencies": ["..."],
+        "infra_deployment": ["..."],
+        "tests": ["..."],
+        "tools_scripts": ["..."],
+        "data_assets_dataset": ["..."]
+      },
+      "uncertain_files": [
+        {
+          "path": "...",
+          "candidate_groups": ["frontend", "integrations"],
+          "reason": "..."
+        }
+      ],
+      "unclassified_files": ["..."],
+      "unknowns": ["..."]
+    }
+  description: |
+    Objective:
+    Classify all selected files into the best-fit primary repository component using only Phase 1 tree-level evidence.
+
+    Allowed component groups:
+    - overview_docs:
+      Files that explain the project at a high level, how it works, how to run it, or how to contribute.
+      Typical files: README.md, CONTRIBUTING.md, ARCHITECTURE.md, setup guides, onboarding docs, deployment docs, design notes.
+      Purpose: understand project purpose, scope, and usage.
+
+    - frontend:
+      Files related to the user-facing application, UI rendering, client-side routing, state, and browser-side behavior.
+      Typical files: React/Vue/Angular/Svelte app files, pages, components, hooks, client-side services, CSS tied to UI behavior, frontend entrypoints.
+      Common folders: frontend/, web/, client/, ui/, src/.
+      Purpose: understand the presentation layer and browser-side flow.
+
+    - backend:
+      Files related to server-side request handling, business logic, APIs, controllers, services, and application runtime.
+      Typical files: API entrypoints, route handlers, controllers, service layer, application boot files, backend business logic.
+      Common folders: backend/, server/, api/, app/.
+      Purpose: understand server-side behavior and main application logic.
+
+    - database_schema:
+      Files that define data models, schemas, migrations, persistence structure, or database initialization.
+      Typical files: ORM models, schema definitions, migration scripts, SQL schema files, Alembic/Prisma files, DB config related to schema or persistence.
+      Common folders: models/, schemas/, migrations/, alembic/, prisma/, db/.
+      Purpose: understand the data model and persistence structure.
+
+    - workers:
+      Files related to asynchronous processing, background jobs, queues, schedulers, consumers, or offline processing pipelines.
+      Typical files: worker entrypoints, queue consumers, job processors, Celery/RQ/Bull workers, cron or scheduled tasks.
+      Common folders: worker/, jobs/, tasks/, queue/, consumers/.
+      Purpose: understand non-request-response execution paths.
+
+    - integrations:
+      Files whose main responsibility is interacting with external systems, third-party services, cloud providers, storage, email, AI APIs, payment gateways, or messaging systems.
+      Typical files: S3/SQS/SES wrappers, Stripe/OpenAI/GitHub clients, webhook clients, provider SDK wrappers, service adapter modules.
+      Common folders: services/, integrations/, clients/, providers/.
+      Purpose: understand external dependencies and integration boundaries.
+      Note: a file can be located under backend paths and still belong to integrations if its main role is external communication.
+
+    - config_env:
+      Files that define application configuration, environment handling, runtime settings, secrets templates, feature flags, or operational parameters.
+      Typical files: .env.example, config.py, settings.py, application.yml, config loaders, environment variable parsers.
+      Common folders: config/, settings/.
+      Purpose: understand how the system is configured and parameterized.
+
+    - build_dependencies:
+      Files that define dependencies, packages, build tooling, or language and framework setup.
+      Typical files: package.json, requirements.txt, pyproject.toml, go.mod, Cargo.toml, pom.xml, frontend build configs like Vite or Webpack when primarily build-related.
+      Purpose: understand the stack, dependency model, and build ecosystem.
+
+    - infra_deployment:
+      Files related to infrastructure provisioning, containerization, deployment, CI/CD, cloud setup, and runtime environment topology.
+      Typical files: Dockerfile, docker-compose.yml, .github/workflows/*, Terraform, Helm charts, Kubernetes manifests, deployment docs.
+      Common folders: terraform/, helm/, k8s/, deploy/.
+      Purpose: understand how the system is built, deployed, and operated.
+
+    - tests:
+      Files intended to verify correctness, behavior, integration, or end-to-end flows.
+      Typical files: unit tests, integration tests, e2e tests, fixtures, mocks, test helpers.
+      Common folders: tests/, test/, __tests__/.
+      Purpose: understand quality coverage and expected behavior.
+
+    - tools_scripts:
+      Utility files used for maintenance, automation, local tooling, setup scripts, migrations, code generation, or developer workflows, but not part of primary runtime behavior.
+      Typical files: helper scripts, CLI utilities, setup scripts, maintenance tools, one-off automation, local dev tooling.
+      Common folders: tools/, scripts/, bin/.
+      Purpose: understand supporting automation and engineering workflows.
+
+    - data_assets_dataset:
+      Files containing static assets, sample inputs, datasets, notebooks, media, model artifacts, or content files used by the application or analysis pipelines.
+      Typical files: CSV or JSON datasets, images, PDFs, notebooks, example input files, static assets, trained model files.
+      Common folders: data/, assets/, public/, notebooks/.
+      Purpose: understand non-code resources and data dependencies.
+
+    Hard constraints:
+    - Do not perform deep code review.
+    - Do not invent files or paths.
+    - Use only selected_files and documentation previews as evidence.
+    - Assign each file to the best-fit primary component based on main responsibility, not just folder name.
+    - If uncertain, put the file in uncertain_files instead of guessing.
+
+    Tie-break rules:
+    - runtime role over location
+    - main responsibility over filename
+    - specific component over generic component
+
+    Examples:
+    - backend/app/services/sqs_service.py -> integrations
+    - backend/app/models/user.py -> database_schema
+    - frontend/vite.config.js -> build_dependencies
+    - AWS_SETUP.md -> infra_deployment
+    - scripts/bootstrap.sh -> tools_scripts
+
+    Output rules:
+    - groups should contain only selected_files
+    - uncertain_files should include candidate_groups and a reason
+    - use unclassified_files only when no reasonable candidate_groups can be proposed
+    - return structured JSON only
+
+    Phase 1 analysis input:
+    {analysis_input_json}
+
+task2_resolution:
+  agent: tree_analysis_agent
+  context:
+    - task1_grouping
+  tools:
+    - fetch_uncertain_file_preview
+  expected_output: |
+    {
+      "resolved_groups": {
+        "overview_docs": ["..."],
+        "frontend": ["..."],
+        "backend": ["..."],
+        "database_schema": ["..."],
+        "workers": ["..."],
+        "integrations": ["..."],
+        "config_env": ["..."],
+        "build_dependencies": ["..."],
+        "infra_deployment": ["..."],
+        "tests": ["..."],
+        "tools_scripts": ["..."],
+        "data_assets_dataset": ["..."]
+      },
+      "remaining_uncertain_files": [
+        {
+          "path": "...",
+          "candidate_groups": ["frontend", "integrations"],
+          "reason": "..."
+        }
+      ],
+      "remaining_unclassified_files": ["..."],
+      "unknowns": ["..."]
+    }
+  description: |
+    Objective:
+    Resolve the uncertain files and unclassified files from Task 1 using Task 1 context, the Phase 1 analysis input, and file previews from the preview tool.
+
+    Hard constraints:
+    - Do not invent files or paths.
+    - Do not perform deep code review.
+    - Only resolve files that Task 1 identified as uncertain or unclassified.
+    - If Task 1 did not identify any uncertain files or unclassified files, return empty resolved_groups, empty remaining_uncertain_files, and empty remaining_unclassified_files.
+    - If a previously uncertain file is still ambiguous after reading a preview, keep it in remaining_uncertain_files.
+    - If a previously unclassified file is still not classifiable after reading a preview, keep it in remaining_unclassified_files.
+
+    Resolution rules:
+    - Use Task 1 context to identify which files were marked uncertain and which were left unclassified.
+    - For each uncertain or unclassified file, call the preview tool to inspect a bounded snippet before deciding its best-fit group.
+    - Start with the first chunk of a file.
+    - If the first chunk is mostly imports, setup, boilerplate, or otherwise inconclusive, call the preview tool again with a higher start_line to inspect the next chunk.
+    - Do not request the same chunk twice for the same file.
+    - Stop requesting more chunks as soon as the file's role is clear.
+    - Once a file is clear enough to classify, move to the next unresolved file instead of rereading it.
+    - Revisit a file only if a later unresolved question requires a different line range.
+    - Avoid unnecessary extra chunk fetches.
+    - Assign resolved files into the fixed component taxonomy only.
+    - Prefer explicit remaining uncertainty over weak guesses.
+
+    Fixed component taxonomy:
+    - overview_docs
+    - frontend
+    - backend
+    - database_schema
+    - workers
+    - integrations
+    - config_env
+    - build_dependencies
+    - infra_deployment
+    - tests
+    - tools_scripts
+    - data_assets_dataset
+
+    Phase 1 analysis input:
+    {analysis_input_json}

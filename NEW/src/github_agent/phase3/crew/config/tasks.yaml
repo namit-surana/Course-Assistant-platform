@@ -1,0 +1,238 @@
+repo_intake_task:
+  agent: repo_intake_agent
+  expected_output: |
+    {
+      "repo_summary": "...",
+      "main_capabilities": ["..."],
+      "stack_summary": ["..."],
+      "maturity_signals": ["..."],
+      "architecture_hypotheses": ["..."],
+      "has_frontend": true,
+      "has_backend": true,
+      "has_integrations": true,
+      "has_platform_surface": true,
+      "focus_paths": ["..."]
+    }
+  description: |
+    Objective:
+    Build a high-level understanding of the repository from the provided analysis input.
+
+    Responsibilities:
+    - Explain what the repository is and what it appears to do.
+    - Summarize the stack and repo maturity signals.
+    - Form initial architecture hypotheses supported by evidence.
+    - Determine whether frontend, backend, integration/security, and platform-quality specialist analysis is applicable.
+    - Identify the most important focus_paths for deeper review.
+
+    Constraints:
+    - Use only the provided analysis input and task context.
+    - Do not invent runtime details or architecture components.
+    - Prefer explicit uncertainty over unsupported certainty.
+
+    Analysis input:
+    {analysis_input_json}
+
+frontend_analysis_task:
+  agent: frontend_agent
+  tools:
+    - fetch_repo_file_preview
+  expected_output: |
+    {
+      "applicable": true,
+      "summary": "...",
+      "runtime_behavior": ["..."],
+      "architecture_patterns": ["..."],
+      "risks": ["..."],
+      "strengths": ["..."],
+      "intelligent_questions": ["..."],
+      "evidence_paths": ["..."]
+    }
+  description: |
+    Objective:
+    Analyze the repository's frontend and browser-side behavior.
+
+    Rules:
+    - Use the provided specialist analysis input as the complete working context for this task.
+    - If assigned_paths is empty, return applicable=false with a brief summary and empty lists.
+    - If applicable, use the preview tool only on assigned_paths before drawing conclusions.
+    - Start with the first chunk of an assigned file.
+    - If the first chunk is mostly imports, setup, boilerplate, or otherwise inconclusive, call the preview tool again with a higher start_line to inspect the next chunk.
+    - Do not request the same chunk twice for the same file.
+    - Stop requesting more chunks as soon as the file's role is clear.
+    - Once a file's role is clear, move to the next uninspected assigned path instead of rereading it.
+    - Revisit a file only for a specific unresolved question and then request a different line range.
+    - Avoid unnecessary extra chunk fetches.
+    - Focus on UI structure, routes, state, components, browser-side runtime flow, and client-side API interactions.
+    - Be concise. Keep summary under 140 words.
+    - Return at most 5 runtime_behavior items, 4 architecture_patterns, 5 risks, 4 strengths, and 4 intelligent_questions.
+    - Do not repeat the repo overview, intake summary, or the same point in multiple sections.
+
+    Specialist analysis input:
+    {specialist_input_json}
+
+backend_analysis_task:
+  agent: backend_agent
+  tools:
+    - fetch_repo_file_preview
+  expected_output: |
+    {
+      "applicable": true,
+      "summary": "...",
+      "runtime_behavior": ["..."],
+      "architecture_patterns": ["..."],
+      "risks": ["..."],
+      "strengths": ["..."],
+      "intelligent_questions": ["..."],
+      "evidence_paths": ["..."]
+    }
+  description: |
+    Objective:
+    Analyze the repository's backend runtime, APIs, persistence, workers, and service boundaries.
+
+    Rules:
+    - Use the provided specialist analysis input as the complete working context for this task.
+    - If assigned_paths is empty, return applicable=false with a brief summary and empty lists.
+    - If applicable, inspect assigned_paths with the preview tool before reasoning.
+    - Start with the first chunk of an assigned file.
+    - If the first chunk is mostly imports, setup, boilerplate, or otherwise inconclusive, call the preview tool again with a higher start_line to inspect the next chunk.
+    - Do not request the same chunk twice for the same file.
+    - Stop requesting more chunks as soon as the file's role is clear.
+    - Once a file's role is clear, move to the next uninspected assigned path instead of rereading it.
+    - Revisit a file only for a specific unresolved question and then request a different line range.
+    - Inspect at least two distinct assigned files when available before finalizing.
+    - Avoid unnecessary extra chunk fetches.
+    - Focus on request handling, business logic, persistence, workers, background jobs, and runtime behavior.
+    - Be concise. Keep summary under 140 words.
+    - Return at most 6 runtime_behavior items, 5 architecture_patterns, 6 risks, 5 strengths, and 5 intelligent_questions.
+    - Do not repeat the repo overview, intake summary, or the same point in multiple sections.
+
+    Specialist analysis input:
+    {specialist_input_json}
+
+integration_security_task:
+  agent: integration_security_agent
+  tools:
+    - fetch_repo_file_preview
+  expected_output: |
+    {
+      "applicable": true,
+      "summary": "...",
+      "runtime_behavior": ["..."],
+      "architecture_patterns": ["..."],
+      "risks": ["..."],
+      "strengths": ["..."],
+      "intelligent_questions": ["..."],
+      "evidence_paths": ["..."]
+    }
+  description: |
+    Objective:
+    Analyze integrations, configuration surfaces, security-sensitive boundaries, and operational risk.
+
+    Rules:
+    - Use the provided specialist analysis input as the complete working context for this task.
+    - If assigned_paths is empty, return applicable=false with a brief summary and empty lists.
+    - If applicable, inspect assigned_paths with the preview tool before reasoning.
+    - Start with the first chunk of an assigned file.
+    - If the first chunk is mostly imports, setup, boilerplate, or otherwise inconclusive, call the preview tool again with a higher start_line to inspect the next chunk.
+    - Do not request the same chunk twice for the same file.
+    - Inspect the smallest evidence set that can answer the task confidently.
+    - Stop requesting more chunks as soon as the file's role is clear.
+    - Once a file's role is clear, move to the next uninspected assigned path instead of rereading it.
+    - Revisit a file only for a specific unresolved question and then request a different line range.
+    - Prioritize files that expose callback, secret, network, storage, deployment, or provider boundaries before broad hardening advice.
+    - Prefer this file order when available: env/config files first, integration/provider modules second, deployment/runtime config third, documentation last.
+    - Inspect at most 4 distinct assigned files unless a specific unresolved question remains.
+    - Inspect at most 2 chunks per file unless a later chunk is required to resolve a concrete question.
+    - Avoid unnecessary extra chunk fetches.
+    - Focus on third-party dependencies, secrets/config handling, auth-sensitive boundaries, provider integrations, and cloud/service edges.
+    - Be concise. Keep summary under 140 words.
+    - Return at most 5 runtime_behavior items, 4 architecture_patterns, 6 risks, 4 strengths, and 5 intelligent_questions.
+    - Do not repeat the repo overview, intake summary, or broad generic security advice that is not grounded in assigned evidence.
+    - Do not perform a full security audit. Report only the highest-confidence integration and security boundary findings supported by inspected evidence.
+
+    Specialist analysis input:
+    {specialist_input_json}
+
+platform_quality_task:
+  agent: platform_quality_agent
+  tools:
+    - fetch_repo_file_preview
+  expected_output: |
+    {
+      "applicable": true,
+      "summary": "...",
+      "runtime_behavior": ["..."],
+      "architecture_patterns": ["..."],
+      "risks": ["..."],
+      "strengths": ["..."],
+      "intelligent_questions": ["..."],
+      "evidence_paths": ["..."]
+    }
+  description: |
+    Objective:
+    Evaluate tests, tooling, automation, CI/CD, maintainability, and engineering quality signals.
+
+    Rules:
+    - Use the provided specialist analysis input as the complete working context for this task.
+    - If assigned_paths is empty, return applicable=false with a brief summary and empty lists.
+    - If applicable, inspect assigned_paths with the preview tool before reasoning.
+    - Start with the first chunk of an assigned file.
+    - If the first chunk is mostly imports, setup, boilerplate, or otherwise inconclusive, call the preview tool again with a higher start_line to inspect the next chunk.
+    - Do not request the same chunk twice for the same file.
+    - Stop requesting more chunks as soon as the file's role is clear.
+    - Once a file's role is clear, move to the next uninspected assigned path instead of rereading it.
+    - Revisit a file only for a specific unresolved question and then request a different line range.
+    - Avoid unnecessary extra chunk fetches.
+    - Focus on quality signals, maintainability, developer workflow, data/assets handling quality, and delivery reliability.
+    - Be concise. Keep summary under 120 words.
+    - Return at most 4 runtime_behavior items, 4 architecture_patterns, 5 risks, 4 strengths, and 4 intelligent_questions.
+    - Do not restate repository architecture or produce a broad security review; stay strictly on tests, tooling, CI/CD, dependencies, and maintainability.
+
+    Specialist analysis input:
+    {specialist_input_json}
+
+final_report_task:
+  agent: repo_intake_agent
+  expected_output: |
+    {
+      "report_title": "...",
+      "executive_summary": "...",
+      "repository_overview": "...",
+      "component_summary": ["..."],
+      "runtime_behavior": ["..."],
+      "architecture_patterns": ["..."],
+      "risks_and_weaknesses": ["..."],
+      "quality_assessment": "...",
+      "strengths": ["..."],
+      "intelligent_questions": ["..."],
+      "recommended_next_steps": ["..."],
+      "evidence_paths": ["..."]
+    }
+  description: |
+    Objective:
+    Synthesize the intake and specialist analyses into one clean, professional final repository assessment.
+
+    Requirements:
+    - Summarize what the system is, how it appears to work at runtime, and which architecture patterns are present.
+    - Evaluate quality and highlight the strongest parts of the system.
+    - Detect and summarize the most meaningful risks and weaknesses.
+    - Generate intelligent follow-up questions that would help reduce uncertainty.
+    - Base every conclusion on the provided analysis input and prior task context.
+
+    Analysis input:
+    {analysis_input_json}
+
+    Repo Intake output:
+    {repo_intake_json}
+
+    Frontend review summary:
+    {frontend_summary_json}
+
+    Backend review summary:
+    {backend_summary_json}
+
+    Integration and security review summary:
+    {integration_security_summary_json}
+
+    Platform quality review summary:
+    {platform_quality_summary_json}

@@ -1,0 +1,56 @@
+# Secrets / env
+.env
+.env.*
+!.env.example
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyd
+.Python
+.venv/
+venv/
+env/
+pip-wheel-metadata/
+.pytest_cache/
+.pytest_tmp/
+.test_tmp/
+.mypy_cache/
+.ruff_cache/
+.coverage
+coverage.xml
+htmlcov/
+.tox/
+
+# Node / Next.js (for sub-apps)
+**/node_modules/
+**/.next/
+**/out/
+**/dist/
+**/.turbo/
+**/.cache/
+**/.npm/
+**/.pnpm-store/
+**/.yarn/
+**/tsconfig.tsbuildinfo
+
+# Logs
+*.log
+
+# OS / IDE
+.DS_Store
+Thumbs.db
+desktop.ini
+.vscode/
+.idea/
+
+# Artifacts produced by this repo
+outputs/
+
+# Keep only the chosen frontend in git
+# (local-only or deprecated app; do not deploy)
+agent-plan-app/
+
+# Nested git dirs (avoid committing vendor metadata)
+**/.git/
+
