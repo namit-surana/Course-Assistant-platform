@@ -5,7 +5,7 @@ from typing import Any
 from crewai import Agent, Crew, LLM, Task
 from pptx import Presentation
 
-from app.config import get_settings
+from src.config.settings import get_settings
 
 settings = get_settings()
 
@@ -57,12 +57,6 @@ def _normalize_scores(
     result: dict[str, Any], rubric_criteria: list[dict[str, Any]]
 ) -> dict[str, Any]:
     """Clamp scores to rubric max_score and keep output consistent."""
-    max_score_map = {
-        item["category"]: float(item["max_score"])
-        for item in rubric_criteria
-        if "category" in item and "max_score" in item
-    }
-
     normalized_scores: list[dict[str, Any]] = []
 
     for rubric_item in rubric_criteria:
@@ -130,9 +124,9 @@ def analyze_ppt(ppt_path: str, rubric_criteria: list[dict[str, Any]]) -> dict[st
         )
 
         llm = LLM(
-                model="gemini-2.5-flash",
-                api_key=settings.GEMINI_API_KEY,
-            )
+            model="gemini/gemini-2.5-flash",
+            api_key=settings.GEMINI_API_KEY,
+        )
 
         ppt_analyzer_agent = Agent(
             role="PPT Analyzer",
@@ -192,8 +186,7 @@ Return exactly this JSON structure:
 
         result = crew.kickoff()
         parsed = _extract_json_from_text(str(result))
-        normalized = _normalize_scores(parsed, rubric_criteria)
-        return normalized
+        return _normalize_scores(parsed, rubric_criteria)
 
     except Exception as exc:
         return {

@@ -27,9 +27,10 @@ class Settings(BaseSettings):
         alias="REPOSITORY_ANALYSIS_MODEL",
     )
 
+    # ✅ ADD THIS
+    GEMINI_API_KEY: str | None = Field(default=None, alias="GEMINI_API_KEY")
+
 
 @lru_cache(maxsize=1)
 def get_settings() -> Settings:
-    """Return a cached application settings instance."""
-
     return Settings()

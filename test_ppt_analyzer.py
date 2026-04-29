@@ -1,9 +1,9 @@
 import os
 import sys
 
-sys.path.append(os.path.abspath("backend"))
+sys.path.append(os.path.abspath("."))
 
-from app.worker.analyzers.ppt_analyzer import analyze_ppt
+from src.ppt_agent.ppt_analyzer import analyze_ppt
 
 ppt_path = "sample_presentation.pptx"
 
