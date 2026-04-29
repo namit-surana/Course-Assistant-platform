@@ -1,18 +1,18 @@
-import logging
 import asyncio
-from contextlib import asynccontextmanager
 import json
+import logging
+import tempfile
+from contextlib import asynccontextmanager
 
-from fastapi import Depends, FastAPI, HTTPException
+from fastapi import Depends, FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import RedirectResponse, StreamingResponse
 
-from src.config.settings import Settings, get_settings
 from src.api_ui.models.schemas import AnalysisRunState
-from src.api_ui.services.audit_log_service import AuditLogService
-from src.api_ui.services.crewai_live_events import RUN_EVENT_BRIDGE as _RUN_EVENT_BRIDGE
 from src.api_ui.services.analysis_run_service import AnalysisRunService
+from src.api_ui.services.audit_log_service import AuditLogService
 from src.api_ui.services.run_store import AnalysisRunStore, RunNotFoundError
+from src.config.settings import Settings, get_settings
 from src.github_agent.phase1.models.schemas import AnalyzeRequest, AnalyzeResponse
 from src.github_agent.phase1.services.context_builder import ContextBuilder
 from src.github_agent.phase1.services.filter_service import FilterService
@@ -36,11 +36,14 @@ from src.github_agent.phase3.services.repository_analysis_service import (
     RepositoryAnalysisService,
     create_repository_analysis_service,
 )
+from src.ppt_agent.ppt_analyzer import analyze_ppt
 from src.utils.logging import configure_logging
 
 
 logger = logging.getLogger(__name__)
-RUN_STORE = AnalysisRunStore(audit_log_service=AuditLogService(get_settings().output_dir / "run_audit"))
+RUN_STORE = AnalysisRunStore(
+    audit_log_service=AuditLogService(get_settings().output_dir / "run_audit")
+)
 RUN_SERVICE = AnalysisRunService(RUN_STORE)
 
 
@@ -52,6 +55,7 @@ async def lifespan(_: FastAPI):
 
 
 app = FastAPI(title="GitHub Repository Analyzer", version="3.0.0", lifespan=lifespan)
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
@@ -125,7 +129,9 @@ async def create_run(
     filter_service: FilterService = Depends(get_filter_service),
     context_builder: ContextBuilder = Depends(get_context_builder),
     tree_analysis_service: TreeAnalysisService = Depends(get_tree_analysis_service),
-    repository_analysis_service: RepositoryAnalysisService = Depends(get_repository_analysis_service),
+    repository_analysis_service: RepositoryAnalysisService = Depends(
+        get_repository_analysis_service
+    ),
 ) -> AnalysisRunState:
     return await analysis_run_service.start_run(
         request,
@@ -196,6 +202,35 @@ async def stream_run(
     )
 
 
+@app.post("/analyze-ppt")
+async def analyze_presentation(
+    file: UploadFile = File(...),
+    rubric_json: str = Form(...),
+):
+    try:
+        rubric = json.loads(rubric_json)
+    except json.JSONDecodeError as exc:
+        raise HTTPException(status_code=400, detail="Invalid rubric_json format.") from exc
+
+    filename = file.filename or ""
+
+    if filename.lower().endswith(".pptx"):
+        suffix = ".pptx"
+    elif filename.lower().endswith(".pdf"):
+        suffix = ".pdf"
+    else:
+        raise HTTPException(
+            status_code=400,
+            detail="Only .pptx and .pdf files are supported.",
+        )
+
+    with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as temp:
+        temp.write(await file.read())
+        temp_path = temp.name
+
+    return analyze_ppt(temp_path, rubric)
+
+
 @app.post("/analyze", response_model=AnalyzeResponse)
 async def analyze_repository(
     request: AnalyzeRequest,
@@ -204,7 +239,9 @@ async def analyze_repository(
     filter_service: FilterService = Depends(get_filter_service),
     context_builder: ContextBuilder = Depends(get_context_builder),
     tree_analysis_service: TreeAnalysisService = Depends(get_tree_analysis_service),
-    repository_analysis_service: RepositoryAnalysisService = Depends(get_repository_analysis_service),
+    repository_analysis_service: RepositoryAnalysisService = Depends(
+        get_repository_analysis_service
+    ),
 ) -> AnalyzeResponse:
     """Analyze a public GitHub repository end to end across Phase 1, Phase 2, and Phase 3."""
 

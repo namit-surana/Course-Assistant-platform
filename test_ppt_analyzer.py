@@ -5,7 +5,7 @@ sys.path.append(os.path.abspath("."))
 
 from src.ppt_agent.ppt_analyzer import analyze_ppt
 
-ppt_path = "sample_presentation.pptx"
+ppt_path = "sample.pdf"
 
 rubric = [
     {

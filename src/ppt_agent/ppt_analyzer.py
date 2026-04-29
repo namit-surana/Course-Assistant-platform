@@ -2,6 +2,7 @@ import json
 import re
 from typing import Any
 
+import fitz  # PyMuPDF
 from crewai import Agent, Crew, LLM, Task
 from pptx import Presentation
 
@@ -10,12 +11,9 @@ from src.config.settings import get_settings
 settings = get_settings()
 
 
-def extract_ppt_text(ppt_path: str) -> str:
-    """Extract all readable text from a .pptx file."""
-    if not ppt_path.lower().endswith(".pptx"):
-        raise ValueError("Only .pptx files are supported")
-
-    presentation = Presentation(ppt_path)
+def extract_ppt_text(file_path: str) -> str:
+    """Extract readable text from a .pptx file."""
+    presentation = Presentation(file_path)
     slides_text: list[str] = []
 
     for index, slide in enumerate(presentation.slides, start=1):
@@ -33,8 +31,34 @@ def extract_ppt_text(ppt_path: str) -> str:
     return "\n\n".join(slides_text)
 
 
+def extract_pdf_text(file_path: str) -> str:
+    """Extract readable text from a .pdf file."""
+    doc = fitz.open(file_path)
+    pages_text: list[str] = []
+
+    for index, page in enumerate(doc, start=1):
+        text = page.get_text().strip()
+        if text:
+            pages_text.append(f"[Page {index}]\n{text}")
+
+    doc.close()
+    return "\n\n".join(pages_text)
+
+
+def extract_document_text(file_path: str) -> str:
+    """Extract text from supported document formats."""
+    lower_path = file_path.lower()
+
+    if lower_path.endswith(".pptx"):
+        return extract_ppt_text(file_path)
+
+    if lower_path.endswith(".pdf"):
+        return extract_pdf_text(file_path)
+
+    raise ValueError("Only .pptx and .pdf files are supported")
+
+
 def _extract_json_from_text(text: str) -> dict[str, Any]:
-    """Extract JSON safely from model output."""
     cleaned = text.strip()
 
     try:
@@ -56,7 +80,6 @@ def _extract_json_from_text(text: str) -> dict[str, Any]:
 def _normalize_scores(
     result: dict[str, Any], rubric_criteria: list[dict[str, Any]]
 ) -> dict[str, Any]:
-    """Clamp scores to rubric max_score and keep output consistent."""
     normalized_scores: list[dict[str, Any]] = []
 
     for rubric_item in rubric_criteria:
@@ -79,9 +102,8 @@ def _normalize_scores(
             )
             continue
 
-        raw_score = matched.get("score", 0)
         try:
-            numeric_score = float(raw_score)
+            numeric_score = float(matched.get("score", 0))
         except (TypeError, ValueError):
             numeric_score = 0.0
 
@@ -101,19 +123,19 @@ def _normalize_scores(
     return result
 
 
-def analyze_ppt(ppt_path: str, rubric_criteria: list[dict[str, Any]]) -> dict[str, Any]:
+def analyze_ppt(file_path: str, rubric_criteria: list[dict[str, Any]]) -> dict[str, Any]:
     """
-    Analyze PPT content against rubric criteria using CrewAI + Gemini.
-    Expects a local .pptx path.
+    Analyze PPT/PDF content against rubric criteria using CrewAI + Gemini.
+    Supports .pptx and .pdf files.
     """
     try:
-        slide_text = extract_ppt_text(ppt_path)
+        document_text = extract_document_text(file_path)
 
-        if not slide_text.strip():
+        if not document_text.strip():
             return {
                 "criteria_scores": [],
-                "ppt_summary": "No readable text was found in the presentation.",
-                "error": "Empty presentation content",
+                "ppt_summary": "No readable text was found in the file.",
+                "error": "Empty file content",
             }
 
         criteria_text = "\n".join(
@@ -124,17 +146,16 @@ def analyze_ppt(ppt_path: str, rubric_criteria: list[dict[str, Any]]) -> dict[st
         )
 
         llm = LLM(
-            model="gemini/gemini-2.5-flash",
+            model="gemini/gemini-2.5-flash-lite",
             api_key=settings.GEMINI_API_KEY,
         )
 
-        ppt_analyzer_agent = Agent(
-            role="PPT Analyzer",
-            goal="Evaluate PowerPoint slides against rubric criteria and return strict JSON output.",
+        analyzer_agent = Agent(
+            role="Presentation Analyzer",
+            goal="Evaluate presentation or document content against rubric criteria and return strict JSON output.",
             backstory=(
-                "You are an academic presentation evaluator. "
-                "You score each rubric criterion carefully, justify each score briefly, "
-                "and always return valid JSON only."
+                "You are an academic evaluator. You score each rubric criterion carefully, "
+                "justify each score briefly, and always return valid JSON only."
             ),
             llm=llm,
             verbose=False,
@@ -142,19 +163,19 @@ def analyze_ppt(ppt_path: str, rubric_criteria: list[dict[str, Any]]) -> dict[st
         )
 
         prompt = f"""
-You are evaluating an academic presentation.
+You are evaluating an academic presentation/document.
 
 RUBRIC CRITERIA:
 {criteria_text}
 
-PRESENTATION CONTENT:
-{slide_text}
+DOCUMENT CONTENT:
+{document_text}
 
 Instructions:
 - Evaluate each rubric criterion separately.
 - Score each criterion from 0 up to that criterion's max_score.
 - Give a short but clear explanation for each criterion.
-- Give an overall 2-3 sentence summary of the presentation.
+- Give an overall 2-3 sentence summary.
 - Return ONLY valid JSON.
 - Do not include markdown.
 - Do not include any extra text before or after the JSON.
@@ -174,12 +195,12 @@ Return exactly this JSON structure:
 
         analyze_task = Task(
             description=prompt,
-            expected_output="A valid JSON object with criterion-wise scores and a presentation summary.",
-            agent=ppt_analyzer_agent,
+            expected_output="A valid JSON object with criterion-wise scores and a summary.",
+            agent=analyzer_agent,
         )
 
         crew = Crew(
-            agents=[ppt_analyzer_agent],
+            agents=[analyzer_agent],
             tasks=[analyze_task],
             verbose=False,
         )
@@ -192,5 +213,5 @@ Return exactly this JSON structure:
         return {
             "criteria_scores": [],
             "ppt_summary": "",
-            "error": f"PPT analysis failed: {str(exc)}",
+            "error": f"Analysis failed: {str(exc)}",
         }
