@@ -12,6 +12,7 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useEventsStore } from "@/lib/events-store";
+import { fetchWorkerSubmission, mapWorkerSubmissionToRun } from "@/lib/backend-submissions";
 import type { Submission, AnalysisRunState } from "@/lib/types";
 
 const API_BASE_URL =
@@ -37,6 +38,25 @@ export function SubmissionCard({ submission, eventId, isSelected = false, onClic
   useEffect(() => {
     if (run.status !== "queued" && run.status !== "running") return;
 
+    if (submission.workerSubmissionId) {
+      let active = true;
+      async function refreshWorkerSubmission() {
+        if (!submission.workerSubmissionId) return;
+        try {
+          const detail = await fetchWorkerSubmission(submission.workerSubmissionId);
+          if (!active) return;
+          updateSubmission(eventId, submission.runId, mapWorkerSubmissionToRun(detail, run));
+        } catch {}
+      }
+
+      void refreshWorkerSubmission();
+      const intervalId = window.setInterval(refreshWorkerSubmission, 5000);
+      return () => {
+        active = false;
+        window.clearInterval(intervalId);
+      };
+    }
+
     const source = new EventSource(`${API_BASE_URL}/api/runs/${submission.runId}/stream`);
     sourceRef.current = source;
 
@@ -61,7 +81,7 @@ export function SubmissionCard({ submission, eventId, isSelected = false, onClic
 
     return () => source.close();
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [submission.runId]);
+  }, [eventId, run.status, submission.runId, submission.workerSubmissionId, updateSubmission]);
 
   const totalPhases = run.phases.length;
   const donePhases  = run.phases.filter((p) => p.status === "completed").length;

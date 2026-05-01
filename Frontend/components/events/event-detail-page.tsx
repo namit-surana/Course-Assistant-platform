@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { useRouter } from "next/navigation";
 import { ArrowLeft, Plus, Trophy, GraduationCap, Layers, Users, Inbox } from "lucide-react";
@@ -29,13 +29,21 @@ export function EventDetailPage({ eventId }: { eventId: string }) {
   const router      = useRouter();
   const event       = useEventsStore((s) => s.events.find((e) => e.id === eventId));
   const submissions = useEventsStore((s) => s.submissions[eventId] ?? EMPTY_SUBMISSIONS);
+  const isLoadingEvents = useEventsStore((s) => s.isLoadingEvents);
+  const loadEvents = useEventsStore((s) => s.loadEvents);
+  const loadSubmissions = useEventsStore((s) => s.loadSubmissions);
   const [modalOpen,  setModalOpen]  = useState(false);
   const [selectedId, setSelectedId] = useState<string | null>(null);
+
+  useEffect(() => {
+    void loadEvents();
+    void loadSubmissions(eventId);
+  }, [eventId, loadEvents, loadSubmissions]);
 
   if (!event) {
     return (
       <div className="min-h-screen bg-background flex items-center justify-center">
-        <p className="text-neutral-400">Event not found.</p>
+        <p className="text-neutral-400">{isLoadingEvents ? "Loading event..." : "Event not found."}</p>
       </div>
     );
   }
@@ -128,7 +136,7 @@ export function EventDetailPage({ eventId }: { eventId: string }) {
             <Inbox className="mb-3 h-8 w-8 text-neutral-600" />
             <p className="text-sm font-medium text-neutral-400">No submissions yet</p>
             <p className="mt-1 text-xs text-neutral-600">
-              Click "Add Team" to submit a GitHub repo for AI analysis
+              Click Add Team to submit a GitHub repo for AI analysis
             </p>
             <button
               onClick={() => setModalOpen(true)}

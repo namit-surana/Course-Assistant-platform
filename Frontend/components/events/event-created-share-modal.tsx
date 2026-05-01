@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useMemo, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { X, Link2, Copy, Check, PartyPopper } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -18,13 +18,11 @@ interface Props {
 }
 
 export function EventCreatedShareModal({ open, eventId, eventName, onClose }: Props) {
-  const [shareUrl, setShareUrl] = useState("");
   const [copied, setCopied] = useState(false);
-
-  useEffect(() => {
+  const shareUrl = useMemo(() => {
     if (!open || !eventId) return;
     const base = APP_ORIGIN || (typeof window !== "undefined" ? window.location.origin : "");
-    setShareUrl(`${base}/events/${eventId}/submit`);
+    return `${base}/events/${eventId}/submit`;
   }, [open, eventId]);
 
   async function copyLink() {

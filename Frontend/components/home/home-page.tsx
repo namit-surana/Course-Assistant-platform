@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { motion } from "framer-motion";
 import Link from "next/link";
 import { Plus } from "lucide-react";
@@ -19,7 +19,14 @@ const FILTERS: { label: string; value: EventStatus | "all" }[] = [
 
 export function HomePage() {
   const events  = useEventsStore((s) => s.events);
+  const loadEvents = useEventsStore((s) => s.loadEvents);
+  const isLoadingEvents = useEventsStore((s) => s.isLoadingEvents);
+  const eventsError = useEventsStore((s) => s.eventsError);
   const [filter, setFilter] = useState<EventStatus | "all">("active");
+
+  useEffect(() => {
+    void loadEvents();
+  }, [loadEvents]);
 
   const filtered =
     filter === "all" ? events : events.filter((e) => e.status === filter);
@@ -109,7 +116,11 @@ export function HomePage() {
               animate={{ opacity: 1 }}
               className="col-span-full flex flex-col items-center justify-center gap-3 py-20 text-center"
             >
-              <p className="text-[15px] text-muted-foreground">No events here yet.</p>
+              <p className="text-[15px] text-muted-foreground">
+                {isLoadingEvents
+                  ? "Loading events..."
+                  : eventsError || "No events here yet."}
+              </p>
               <Link
                 href="/events/new"
                 className="text-[13px] font-medium text-violet hover:underline"

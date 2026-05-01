@@ -451,6 +451,10 @@ npm run dev    # proxies /api → localhost:8000
 
 ## Deployment (AWS)
 
+For the local full-stack test workflow, see [LOCAL_TESTING.md](LOCAL_TESTING.md).
+
+For AWS Phase 2 data/storage deployment, see [AWS_PHASE2_DEPLOYMENT.md](AWS_PHASE2_DEPLOYMENT.md).
+
 ### Services used in production
 
 | AWS Service | Purpose |
