@@ -4,7 +4,7 @@ import logging
 import tempfile
 from contextlib import asynccontextmanager
 
-from fastapi import Depends, FastAPI, File, Form, HTTPException, UploadFile
+from fastapi import Depends, FastAPI, File, Form, HTTPException, UploadFile, WebSocket
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import RedirectResponse, StreamingResponse
 
@@ -38,6 +38,8 @@ from src.github_agent.phase3.services.repository_analysis_service import (
 )
 from src.ppt_agent.ppt_analyzer import analyze_ppt
 from src.utils.logging import configure_logging
+from src.voice_agent.services.realtime_bridge import VoiceRealtimeBridge
+from src.voice_agent.services.transcript_store import VoiceTranscriptStore
 
 
 logger = logging.getLogger(__name__)
@@ -109,6 +111,20 @@ def get_repository_analysis_service(
 
 def get_analysis_run_service() -> AnalysisRunService:
     return RUN_SERVICE
+
+
+def get_voice_realtime_bridge(
+    settings: Settings = Depends(get_settings),
+) -> VoiceRealtimeBridge:
+    if not settings.elevenlabs_api_key:
+        raise HTTPException(
+            status_code=500,
+            detail="ELEVENLABS_API_KEY is not configured.",
+        )
+    return VoiceRealtimeBridge(
+        api_key=settings.elevenlabs_api_key,
+        transcript_store=VoiceTranscriptStore(settings.output_dir),
+    )
 
 
 @app.get("/health")
@@ -199,6 +215,22 @@ async def stream_run(
             "Connection": "keep-alive",
             "X-Accel-Buffering": "no",
         },
+    )
+
+
+@app.websocket("/api/voice-agent/stream")
+async def stream_voice_transcript(
+    websocket: WebSocket,
+    event_id: str | None = None,
+    submission_id: str | None = None,
+    language_code: str = "eng",
+    voice_bridge: VoiceRealtimeBridge = Depends(get_voice_realtime_bridge),
+) -> None:
+    await voice_bridge.run(
+        client_socket=websocket,
+        event_id=event_id,
+        submission_id=submission_id,
+        language_code=language_code,
     )
 
 

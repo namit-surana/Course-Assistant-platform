@@ -29,6 +29,7 @@ class Settings(BaseSettings):
 
     # ✅ ADD THIS
     GEMINI_API_KEY: str | None = Field(default=None, alias="GEMINI_API_KEY")
+    elevenlabs_api_key: str | None = Field(default=None, alias="ELEVENLABS_API_KEY")
 
 
 @lru_cache(maxsize=1)

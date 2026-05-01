@@ -184,6 +184,7 @@ export function EventDetailPage({ eventId }: { eventId: string }) {
             >
               {selectedSub && (
                 <SubmissionDetailPanel
+                  eventId={eventId}
                   submission={selectedSub}
                   onClose={() => setSelectedId(null)}
                 />

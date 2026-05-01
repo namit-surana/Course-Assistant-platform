@@ -1,5 +1,6 @@
 "use client";
 
+import { useEffect, useMemo, useRef, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   X,
@@ -15,22 +16,163 @@ import { mapRunToPlan } from "@/lib/run-utils";
 import { ResultsPanel } from "@/components/analyze/results-panel";
 import AgentPlan from "@/components/ui/agent-plan";
 import type { Submission } from "@/lib/types";
+import { useEventsStore } from "@/lib/events-store";
+
+const API_BASE_URL =
+  process.env.NEXT_PUBLIC_API_BASE_URL?.replace(/\/$/, "") || "http://127.0.0.1:8000";
 
 function shortUrl(url: string) {
   return url.replace(/^https?:\/\/(www\.)?github\.com\//, "");
 }
 
 interface Props {
+  eventId: string;
   submission: Submission;
   onClose: () => void;
 }
 
-export function SubmissionDetailPanel({ submission, onClose }: Props) {
+export function SubmissionDetailPanel({ eventId, submission, onClose }: Props) {
   const run = submission.run;
   const planTasks = mapRunToPlan(run);
+  const updateVoiceStatus = useEventsStore((s) => s.updateSubmissionVoiceStatus);
+  const updateVoiceTranscript = useEventsStore((s) => s.updateSubmissionVoiceTranscript);
+  const [partialTranscript, setPartialTranscript] = useState("");
+  const [recordError, setRecordError] = useState<string | null>(null);
+  const [isRecording, setIsRecording] = useState(false);
+  const [showFullTranscript, setShowFullTranscript] = useState(false);
+  const [copied, setCopied] = useState(false);
+  const awaitingSaveRef = useRef(false);
+  const socketRef = useRef<WebSocket | null>(null);
+  const audioContextRef = useRef<AudioContext | null>(null);
+  const mediaStreamRef = useRef<MediaStream | null>(null);
+  const processorRef = useRef<ScriptProcessorNode | null>(null);
+  const sourceNodeRef = useRef<MediaStreamAudioSourceNode | null>(null);
+  const wsScheme = typeof window !== "undefined" && window.location.protocol === "https:" ? "wss" : "ws";
+  const wsBase = useMemo(() => API_BASE_URL.replace(/^http/, wsScheme), [wsScheme]);
 
   const totalPhases = run.phases.length;
   const donePhases  = run.phases.filter((p) => p.status === "completed").length;
+
+  useEffect(() => {
+    return () => {
+      void stopRecording();
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  async function startRecording() {
+    setRecordError(null);
+    updateVoiceStatus(eventId, submission.id, "recording");
+    try {
+      const mediaStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      mediaStreamRef.current = mediaStream;
+      const audioContext = new AudioContext({ sampleRate: 16000 });
+      audioContextRef.current = audioContext;
+      const source = audioContext.createMediaStreamSource(mediaStream);
+      sourceNodeRef.current = source;
+      const processor = audioContext.createScriptProcessor(4096, 1, 1);
+      processorRef.current = processor;
+
+      const wsUrl =
+        `${wsBase}/api/voice-agent/stream?event_id=${encodeURIComponent(eventId)}` +
+        `&submission_id=${encodeURIComponent(submission.id)}&language_code=eng`;
+      const socket = new WebSocket(wsUrl);
+      socketRef.current = socket;
+
+      socket.onmessage = (event) => {
+        const payload = JSON.parse(event.data);
+        const messageType = payload.message_type;
+        if (messageType === "partial_transcript") {
+          setPartialTranscript(payload.text || "");
+        }
+        if (messageType === "session_saved" && payload.artifact) {
+          updateVoiceTranscript(eventId, submission.id, payload.artifact);
+          updateVoiceStatus(eventId, submission.id, "completed");
+          awaitingSaveRef.current = false;
+          setPartialTranscript("");
+          socket.close();
+        }
+        if (messageType && String(messageType).includes("error")) {
+          updateVoiceStatus(eventId, submission.id, "failed");
+          awaitingSaveRef.current = false;
+          setRecordError(payload.error || "Voice transcription failed.");
+        }
+      };
+
+      socket.onerror = () => {
+        setRecordError("Voice stream connection failed.");
+        awaitingSaveRef.current = false;
+        updateVoiceStatus(eventId, submission.id, "failed");
+      };
+
+      socket.onclose = () => {
+        socketRef.current = null;
+        if (awaitingSaveRef.current) {
+          setRecordError("Voice stream closed before transcript was saved.");
+          updateVoiceStatus(eventId, submission.id, "failed");
+          awaitingSaveRef.current = false;
+        }
+      };
+
+      processor.onaudioprocess = (audioEvent) => {
+        if (socket.readyState !== WebSocket.OPEN) {
+          return;
+        }
+        const input = audioEvent.inputBuffer.getChannelData(0);
+        const pcm16 = float32ToInt16(input);
+        socket.send(
+          JSON.stringify({
+            type: "audio_chunk",
+            audio_base64: toBase64(pcm16.buffer),
+            sample_rate: 16000,
+            commit: false,
+          }),
+        );
+      };
+
+      source.connect(processor);
+      processor.connect(audioContext.destination);
+      setIsRecording(true);
+    } catch (error) {
+      setRecordError(error instanceof Error ? error.message : "Could not start recording.");
+      updateVoiceStatus(eventId, submission.id, "failed");
+    }
+  }
+
+  async function stopRecording() {
+    if (!isRecording) {
+      return;
+    }
+    setIsRecording(false);
+    awaitingSaveRef.current = true;
+    updateVoiceStatus(eventId, submission.id, "processing");
+    const socket = socketRef.current;
+    if (socket && socket.readyState === WebSocket.OPEN) {
+      socket.send(JSON.stringify({ type: "stop" }));
+    }
+    processorRef.current?.disconnect();
+    sourceNodeRef.current?.disconnect();
+    audioContextRef.current?.close();
+    mediaStreamRef.current?.getTracks().forEach((track) => track.stop());
+    processorRef.current = null;
+    sourceNodeRef.current = null;
+    audioContextRef.current = null;
+    mediaStreamRef.current = null;
+  }
+
+  async function copyTranscript() {
+    const text = submission.voiceTranscript?.full_transcript?.trim();
+    if (!text) {
+      return;
+    }
+    try {
+      await navigator.clipboard.writeText(text);
+      setCopied(true);
+      window.setTimeout(() => setCopied(false), 1200);
+    } catch {
+      setRecordError("Could not copy transcript.");
+    }
+  }
 
   return (
     <div className="flex h-full flex-col overflow-hidden">
@@ -64,6 +206,66 @@ export function SubmissionDetailPanel({ submission, onClose }: Props) {
 
       {/* Scrollable body */}
       <div className="flex-1 overflow-y-auto">
+        <div className="border-b border-neutral-800 px-4 py-4 space-y-3">
+          <p className="text-xs font-semibold uppercase tracking-wider text-neutral-500">
+            Live Voice Transcript
+          </p>
+          <div className="flex items-center gap-2">
+            {!isRecording ? (
+              <button
+                type="button"
+                onClick={() => void startRecording()}
+                className="rounded-lg bg-violet-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-violet-500"
+              >
+                Start Recording
+              </button>
+            ) : (
+              <button
+                type="button"
+                onClick={() => void stopRecording()}
+                className="rounded-lg bg-red-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-red-500"
+              >
+                Stop Recording
+              </button>
+            )}
+            <span className="text-xs text-neutral-500">
+              Status: {submission.voiceStatus ?? "idle"}
+            </span>
+          </div>
+          {partialTranscript ? (
+            <p className="rounded-md border border-neutral-800 bg-neutral-900 px-3 py-2 text-xs text-neutral-300">
+              Live: {partialTranscript}
+            </p>
+          ) : null}
+          {submission.voiceTranscript?.full_transcript ? (
+            <div className="space-y-2">
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => setShowFullTranscript((prev) => !prev)}
+                  className="rounded-md border border-neutral-700 px-2.5 py-1 text-[11px] text-neutral-300 hover:bg-neutral-800"
+                >
+                  {showFullTranscript ? "Hide Full Transcript" : "Show Full Transcript"}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => void copyTranscript()}
+                  className="rounded-md border border-neutral-700 px-2.5 py-1 text-[11px] text-neutral-300 hover:bg-neutral-800"
+                >
+                  {copied ? "Copied" : "Copy Transcript"}
+                </button>
+              </div>
+              {showFullTranscript ? (
+                <p className="rounded-md border border-neutral-800 bg-neutral-900 px-3 py-2 text-xs text-neutral-300 max-h-44 overflow-y-auto">
+                  {submission.voiceTranscript.full_transcript}
+                </p>
+              ) : null}
+            </div>
+          ) : null}
+          {recordError ? (
+            <p className="text-xs text-red-400">{recordError}</p>
+          ) : null}
+        </div>
         <AnimatePresence mode="wait">
 
           {/* Queued */}
@@ -172,6 +374,24 @@ export function SubmissionDetailPanel({ submission, onClose }: Props) {
       </div>
     </div>
   );
+}
+
+function float32ToInt16(float32Array: Float32Array): Int16Array {
+  const out = new Int16Array(float32Array.length);
+  for (let i = 0; i < float32Array.length; i += 1) {
+    const sample = Math.max(-1, Math.min(1, float32Array[i]));
+    out[i] = sample < 0 ? sample * 0x8000 : sample * 0x7fff;
+  }
+  return out;
+}
+
+function toBase64(buffer: ArrayBuffer): string {
+  const bytes = new Uint8Array(buffer);
+  let binary = "";
+  for (let i = 0; i < bytes.byteLength; i += 1) {
+    binary += String.fromCharCode(bytes[i]);
+  }
+  return window.btoa(binary);
 }
 
 function StatusPill({ status }: { status: string }) {

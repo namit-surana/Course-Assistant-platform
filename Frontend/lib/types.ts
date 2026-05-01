@@ -140,6 +140,26 @@ export interface PlanTask {
 
 // ── EvalAI submission types ───────────────────────────────────────────────────
 
+export type VoiceStatus = "idle" | "recording" | "processing" | "completed" | "failed";
+
+export interface VoiceTranscriptSegment {
+  text: string;
+  start?: number | null;
+  end?: number | null;
+}
+
+export interface VoiceTranscriptArtifact {
+  session_id: string;
+  event_id?: string | null;
+  submission_id?: string | null;
+  full_transcript: string;
+  segments: VoiceTranscriptSegment[];
+  provider: string;
+  model: string;
+  created_at: string;
+  output_file?: string | null;
+}
+
 export interface Submission {
   id: string;
   eventId: string;
@@ -148,5 +168,7 @@ export interface Submission {
   branch?: string;
   runId: string;
   run: AnalysisRunState;
+  voiceStatus?: VoiceStatus;
+  voiceTranscript?: VoiceTranscriptArtifact | null;
   createdAt: string;
 }
