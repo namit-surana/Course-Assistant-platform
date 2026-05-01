@@ -89,7 +89,7 @@ const slideVariants = {
 
 export function CreateEventWizard() {
   const router    = useRouter();
-  const addEvent  = useEventsStore((s) => s.addEvent);
+  const createEvent  = useEventsStore((s) => s.createEvent);
   const [step, setStep]           = useState(0);
   const [direction, setDirection] = useState(1);
   const [data, setData]           = useState<EventFormData>(INITIAL_DATA);
@@ -114,21 +114,21 @@ export function CreateEventWizard() {
   const handleCreate = async () => {
     if (!canAdvance) return;
     setIsCreating(true);
-    await new Promise((r) => setTimeout(r, 800));
-    const newId = `evt-${Date.now()}`;
-    addEvent({
-      id:                 newId,
-      name:               data.name,
-      type:               data.type,
-      status:             "active",
-      teamsTotal:         0,
-      teamsEvaluated:     0,
-      submissionDeadline: data.submissionDeadline,
-      judgingDeadline:    data.submissionDeadline,
-      createdAt:          new Date().toISOString().split("T")[0],
-    });
-    setIsCreating(false);
-    setShareModal({ open: true, eventId: newId, eventName: data.name.trim() });
+    try {
+      const event = await createEvent({
+        name: data.name.trim(),
+        type: data.type,
+        status: "active",
+        description: data.description,
+        submissionDeadline: data.submissionDeadline,
+        judgingDeadline: data.submissionDeadline,
+        artifacts: data.artifacts,
+        criteriaConfig: { criteria: data.criteria, artifacts: data.artifacts },
+      });
+      setShareModal({ open: true, eventId: event.id, eventName: event.name });
+    } finally {
+      setIsCreating(false);
+    }
   };
 
   const closeShareModal = () => {

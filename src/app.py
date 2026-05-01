@@ -13,6 +13,7 @@ from src.api_ui.services.analysis_run_service import AnalysisRunService
 from src.api_ui.services.audit_log_service import AuditLogService
 from src.api_ui.services.run_store import AnalysisRunStore, RunNotFoundError
 from src.config.settings import Settings, get_settings
+from src.events.router import router as events_router
 from src.github_agent.phase1.models.schemas import AnalyzeRequest, AnalyzeResponse
 from src.github_agent.phase1.services.context_builder import ContextBuilder
 from src.github_agent.phase1.services.filter_service import FilterService
@@ -37,6 +38,7 @@ from src.github_agent.phase3.services.repository_analysis_service import (
     create_repository_analysis_service,
 )
 from src.ppt_agent.ppt_analyzer import analyze_ppt
+from src.submissions.router import router as submissions_router
 from src.utils.logging import configure_logging
 from src.voice_agent.services.realtime_bridge import VoiceRealtimeBridge
 from src.voice_agent.services.transcript_store import VoiceTranscriptStore
@@ -57,19 +59,17 @@ async def lifespan(_: FastAPI):
 
 
 app = FastAPI(title="GitHub Repository Analyzer", version="3.0.0", lifespan=lifespan)
+settings = get_settings()
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "http://localhost:3000",
-        "http://127.0.0.1:3000",
-        "http://localhost:3001",
-        "http://127.0.0.1:3001",
-    ],
+    allow_origins=settings.cors_allowed_origins,
     allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
 )
+app.include_router(submissions_router)
+app.include_router(events_router)
 
 
 def get_github_service(settings: Settings = Depends(get_settings)) -> GitHubService:

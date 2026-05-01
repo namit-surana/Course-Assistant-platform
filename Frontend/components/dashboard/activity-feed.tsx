@@ -1,6 +1,7 @@
 "use client";
 
 import { motion } from "framer-motion";
+import type { Variants } from "framer-motion";
 import {
   Sparkles,
   Upload,
@@ -23,12 +24,12 @@ const ACTIVITY_CONFIG: Record<
   result_published: { icon: Send, color: "text-success", bg: "bg-success/10" },
 };
 
-const container = {
+const container: Variants = {
   hidden: {},
   show: { transition: { staggerChildren: 0.06 } },
 };
 
-const row = {
+const row: Variants = {
   hidden: { opacity: 0, x: -8 },
   show: { opacity: 1, x: 0, transition: { duration: 0.3, ease: "easeOut" } },
 };

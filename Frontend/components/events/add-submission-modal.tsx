@@ -3,12 +3,14 @@
 import { useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { X, GitBranch, Loader2 } from "lucide-react";
+import {
+  DEFAULT_RUBRIC_TEXT,
+  parseRubricCriteria,
+  submitWorkerProject,
+} from "@/lib/backend-submissions";
 import { useEventsStore } from "@/lib/events-store";
-import type { AnalysisRunState, Submission } from "@/lib/types";
+import type { Submission } from "@/lib/types";
 import { cn } from "@/lib/utils";
-
-const API_BASE_URL =
-  process.env.NEXT_PUBLIC_API_BASE_URL?.replace(/\/$/, "") || "http://127.0.0.1:8000";
 
 interface Props {
   eventId: string;
@@ -21,6 +23,8 @@ export function AddSubmissionModal({ eventId, open, onClose }: Props) {
   const [teamName, setTeamName] = useState("");
   const [repoUrl, setRepoUrl] = useState("");
   const [branch, setBranch] = useState("");
+  const [pptFile, setPptFile] = useState<File | null>(null);
+  const [rubricText, setRubricText] = useState(DEFAULT_RUBRIC_TEXT);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -28,6 +32,8 @@ export function AddSubmissionModal({ eventId, open, onClose }: Props) {
     setTeamName("");
     setRepoUrl("");
     setBranch("");
+    setPptFile(null);
+    setRubricText(DEFAULT_RUBRIC_TEXT);
     setError(null);
     setIsSubmitting(false);
   }
@@ -45,32 +51,27 @@ export function AddSubmissionModal({ eventId, open, onClose }: Props) {
     setIsSubmitting(true);
 
     try {
-      const payload: { repo_url: string; branch?: string } = {
-        repo_url: repoUrl.trim(),
-      };
-      if (branch.trim()) payload.branch = branch.trim();
-
-      const resp = await fetch(`${API_BASE_URL}/api/runs`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
+      const rubricCriteria = parseRubricCriteria(rubricText);
+      const { submission: workerSubmission, run } = await submitWorkerProject({
+        teamName: teamName.trim(),
+        repoUrl: repoUrl.trim(),
+        branch: branch.trim() || undefined,
+        pptFile,
+        rubricCriteria,
+        eventId,
       });
 
-      if (!resp.ok) {
-        const failure = await resp.json().catch(() => ({}));
-        throw new Error(failure.detail || "Failed to start analysis.");
-      }
-
-      const run = (await resp.json()) as AnalysisRunState;
-
       const submission: Submission = {
-        id: `sub-${Date.now()}`,
+        id: workerSubmission.id,
         eventId,
         teamName: teamName.trim(),
         repoUrl: repoUrl.trim(),
         branch: branch.trim() || undefined,
-        runId: run.id,
+        runId: workerSubmission.analysis_job_id,
         run,
+        workerSubmissionId: workerSubmission.id,
+        analysisJobId: workerSubmission.analysis_job_id,
+        pptFileName: pptFile?.name,
         createdAt: new Date().toISOString(),
       };
 
@@ -109,7 +110,7 @@ export function AddSubmissionModal({ eventId, open, onClose }: Props) {
             transition={{ duration: 0.2, ease: [0.25, 0.46, 0.45, 0.94] }}
             className="fixed inset-0 z-50 flex items-center justify-center p-4"
           >
-            <div className="w-full max-w-md rounded-2xl border border-neutral-800 bg-neutral-950 shadow-2xl">
+            <div className="max-h-[90vh] w-full max-w-md overflow-y-auto rounded-2xl border border-neutral-800 bg-neutral-950 shadow-2xl">
               {/* Header */}
               <div className="flex items-center justify-between border-b border-neutral-800 px-6 py-4">
                 <div>
@@ -187,6 +188,41 @@ export function AddSubmissionModal({ eventId, open, onClose }: Props) {
                       disabled={isSubmitting}
                     />
                   </div>
+                </div>
+
+                {/* PPT/PDF artifact */}
+                <div className="space-y-1.5">
+                  <label className="text-sm font-semibold text-neutral-300">
+                    Presentation <span className="text-neutral-500 font-normal">(optional)</span>
+                  </label>
+                  <input
+                    type="file"
+                    accept=".pptx,.pdf,application/pdf,application/vnd.openxmlformats-officedocument.presentationml.presentation"
+                    onChange={(event) => setPptFile(event.target.files?.[0] ?? null)}
+                    className={cn(
+                      "w-full rounded-lg border border-neutral-700 bg-neutral-900 px-3.5 py-2 text-sm text-neutral-300",
+                      "file:mr-3 file:rounded-md file:border-0 file:bg-neutral-800 file:px-2.5 file:py-1 file:text-xs file:text-neutral-200",
+                      "focus:outline-none focus:border-violet-500 transition-colors",
+                    )}
+                    disabled={isSubmitting}
+                  />
+                </div>
+
+                {/* Rubric */}
+                <div className="space-y-1.5">
+                  <label className="text-sm font-semibold text-neutral-300">
+                    Rubric JSON
+                  </label>
+                  <textarea
+                    value={rubricText}
+                    onChange={(event) => setRubricText(event.target.value)}
+                    rows={6}
+                    className={cn(
+                      "w-full rounded-lg border border-neutral-700 bg-neutral-900 px-3.5 py-2 font-mono text-xs text-neutral-200 placeholder:text-neutral-600",
+                      "focus:outline-none focus:border-violet-500 transition-colors",
+                    )}
+                    disabled={isSubmitting}
+                  />
                 </div>
 
                 {/* Error */}

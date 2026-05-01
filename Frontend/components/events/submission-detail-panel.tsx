@@ -7,7 +7,6 @@ import {
   GitBranch,
   Clock,
   Loader2,
-  CheckCircle2,
   XCircle,
   ExternalLink,
 } from "lucide-react";
@@ -335,11 +334,23 @@ export function SubmissionDetailPanel({ eventId, submission, onClose }: Props) {
               exit={{ opacity: 0 }}
               className="p-4 space-y-4"
             >
-              <ResultsPanel
-                analysis={run.result?.repository_analysis}
-                planTasks={planTasks}
-                hideHeader
-              />
+              {run.markdown_report_content ? (
+                <div className="rounded-lg border border-neutral-800 bg-neutral-900 px-3 py-3">
+                  <p className="text-xs font-semibold uppercase tracking-wider text-neutral-500">
+                    Summary
+                  </p>
+                  <p className="mt-2 whitespace-pre-wrap text-sm leading-relaxed text-neutral-300">
+                    {run.markdown_report_content}
+                  </p>
+                </div>
+              ) : null}
+              {run.result?.repository_analysis ? (
+                <ResultsPanel
+                  analysis={run.result.repository_analysis}
+                  planTasks={planTasks}
+                  hideHeader
+                />
+              ) : null}
             </motion.div>
           )}
 
@@ -385,7 +396,7 @@ function float32ToInt16(float32Array: Float32Array): Int16Array {
   return out;
 }
 
-function toBase64(buffer: ArrayBuffer): string {
+function toBase64(buffer: ArrayBufferLike): string {
   const bytes = new Uint8Array(buffer);
   let binary = "";
   for (let i = 0; i < bytes.byteLength; i += 1) {

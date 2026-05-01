@@ -168,7 +168,69 @@ export interface Submission {
   branch?: string;
   runId: string;
   run: AnalysisRunState;
+  workerSubmissionId?: string;
+  analysisJobId?: string;
+  pptFileName?: string;
   voiceStatus?: VoiceStatus;
   voiceTranscript?: VoiceTranscriptArtifact | null;
   createdAt: string;
+}
+
+export interface RubricCriterionInput {
+  category: string;
+  description: string;
+  max_score: number;
+}
+
+export interface WorkerArtifactInput {
+  kind: "ppt" | "video" | "attachment";
+  object_key: string;
+  file_name?: string;
+  content_type?: string;
+  size_bytes?: number;
+}
+
+export interface WorkerSubmissionResponse {
+  id: string;
+  status: RunStatus;
+  analysis_job_id: string;
+  sqs_message_id?: string | null;
+  queued: boolean;
+}
+
+export interface WorkerFeedbackReport {
+  summary?: string | null;
+  raw_result?: {
+    repository?: AnalyzeResponse;
+    ppt?: {
+      ppt_summary?: string;
+      criteria_scores?: Array<{
+        category: string;
+        score: number;
+        comment?: string;
+      }>;
+      skipped?: boolean;
+      reason?: string;
+      error?: string;
+    };
+  } | null;
+  scores: Array<{
+    category: string;
+    score: number;
+    max_score?: number | null;
+    comment?: string | null;
+  }>;
+}
+
+export interface WorkerSubmissionDetail {
+  id: string;
+  event_id?: string | null;
+  team_name: string;
+  repo_url?: string | null;
+  branch?: string | null;
+  status: RunStatus;
+  error_message?: string | null;
+  feedback?: WorkerFeedbackReport | null;
+  created_at: string;
+  updated_at: string;
 }

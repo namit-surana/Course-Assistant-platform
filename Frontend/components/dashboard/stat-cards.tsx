@@ -1,6 +1,7 @@
 "use client";
 
 import { motion } from "framer-motion";
+import type { Variants } from "framer-motion";
 import { TrendingUp, TrendingDown, Minus } from "lucide-react";
 import type { StatCard } from "@/lib/types";
 
@@ -17,12 +18,12 @@ const TrendIcon = ({ trend }: { trend: StatCard["trend"] }) => {
   return <Minus className="h-3.5 w-3.5 text-muted-foreground" />;
 };
 
-const container = {
+const container: Variants = {
   hidden: {},
   show: { transition: { staggerChildren: 0.07 } },
 };
 
-const item = {
+const item: Variants = {
   hidden: { opacity: 0, y: 16 },
   show: { opacity: 1, y: 0, transition: { duration: 0.4, ease: "easeOut" } },
 };
