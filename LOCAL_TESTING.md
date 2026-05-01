@@ -56,9 +56,6 @@ MAX_FILE_SIZE_BYTES=200000
 LOG_LEVEL=INFO
 OUTPUT_DIR=outputs
 ```
-
-Do not paste real `.env` output in group chat. It may include API keys.
-
 ## 2. Start Backend Services
 
 Terminal 1:
@@ -67,8 +64,6 @@ Terminal 1:
 docker compose down
 docker compose up --build db localstack api worker
 ```
-
-Leave this terminal running.
 
 LocalStack automatically creates:
 
