@@ -53,6 +53,8 @@ export function TeamSubmitPage({ eventId }: { eventId: string }) {
         branch: branch.trim() || undefined,
         runId: run.id,
         run,
+        voiceStatus: "idle",
+        voiceTranscript: null,
         createdAt: new Date().toISOString(),
       };
 

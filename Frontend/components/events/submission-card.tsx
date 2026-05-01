@@ -32,6 +32,7 @@ export function SubmissionCard({ submission, eventId, isSelected = false, onClic
   const updateSubmission = useEventsStore((s) => s.updateSubmission);
   const sourceRef = useRef<EventSource | null>(null);
   const run = submission.run;
+  const voiceStatus = submission.voiceStatus ?? "idle";
 
   useEffect(() => {
     if (run.status !== "queued" && run.status !== "running") return;
@@ -140,6 +141,10 @@ export function SubmissionCard({ submission, eventId, isSelected = false, onClic
           {run.error ?? "Analysis failed — click for details"}
         </p>
       )}
+
+      <p className="px-4 pb-3 text-[11px] text-neutral-500">
+        Voice: {voiceStatus}
+      </p>
     </motion.button>
   );
 }
