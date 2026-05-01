@@ -5,10 +5,17 @@ services:
       POSTGRES_DB: coursework
       POSTGRES_USER: coursework
       POSTGRES_PASSWORD: coursework
+    # Host 5433 avoids clashing with another PostgreSQL on Windows using 5432
     ports:
-      - "5432:5432"
+      - "5433:5432"
     volumes:
       - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U coursework -d coursework"]
+      interval: 2s
+      timeout: 5s
+      retries: 20
+      start_period: 10s
 
   localstack:
     image: localstack/localstack:3
@@ -41,8 +48,10 @@ services:
     volumes:
       - ./outputs:/app/outputs
     depends_on:
-      - db
-      - localstack
+      db:
+        condition: service_healthy
+      localstack:
+        condition: service_started
 
   worker:
     build:
@@ -61,8 +70,10 @@ services:
     volumes:
       - ./outputs:/app/outputs
     depends_on:
-      - db
-      - localstack
+      db:
+        condition: service_healthy
+      localstack:
+        condition: service_started
 
 volumes:
   postgres-data:
