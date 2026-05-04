@@ -21,6 +21,7 @@ from src.github_agent.phase1.services.github_service import GitHubService
 from src.github_agent.phase2.services.tree_analysis_service import create_tree_analysis_service
 from src.github_agent.phase3.services.repository_analysis_service import create_repository_analysis_service
 from src.ppt_agent.ppt_analyzer import analyze_ppt
+from src.video_agent.video_analyzer import analyze_video
 
 
 def process_analysis_job(job_id: str, settings: Settings | None = None) -> None:
@@ -94,6 +95,12 @@ def _run_submission_analysis(submission: Submission, settings: Settings) -> dict
             "reason": "WORKER_ENABLE_REPOSITORY_ANALYSIS=false",
         }
 
+    if settings.worker_enable_video_analysis:
+        result["video"] = _run_video_analysis(submission, settings)
+    else:
+        result["video"] = {"skipped": True, "reason": "WORKER_ENABLE_VIDEO_ANALYSIS=false"}
+
+
     return result
 
 
@@ -144,6 +151,21 @@ async def _run_repository_analysis(submission: Submission, settings: Settings) -
     return response.model_dump(mode="json")
 
 
+def _run_video_analysis(submission: Submission, settings: Settings) -> dict[str, Any]:
+    artifact = _first_artifact(submission.artifacts, {"video"})
+    rubric = submission.rubric_snapshot or []
+    if artifact is None:
+        return {"skipped": True, "reason": "No video artifact was submitted."}
+    if not rubric:
+        return {"skipped": True, "reason": "No rubric criteria were submitted."}
+
+    suffix = Path(artifact.file_name or artifact.object_key).suffix or ".mp4"
+    storage = S3StorageService(settings)
+    with tempfile.NamedTemporaryFile(delete=True, suffix=suffix) as temp_file:
+        storage.download_file(artifact.object_key, temp_file.name)
+        return analyze_video(temp_file.name, rubric)
+
+
 def _save_feedback(session: Session, submission: Submission, raw_result: dict[str, Any]) -> None:
     if submission.feedback_report is not None:
         session.delete(submission.feedback_report)
@@ -158,12 +180,13 @@ def _save_feedback(session: Session, submission: Submission, raw_result: dict[st
     session.flush()
 
     ppt_scores = raw_result.get("ppt", {}).get("criteria_scores", [])
+    video_scores = raw_result.get("video", {}).get("criteria_scores", [])
     rubric_by_category = {
         item.get("category"): item
         for item in (submission.rubric_snapshot or [])
         if isinstance(item, dict)
     }
-    for score_item in ppt_scores:
+    for score_item in ppt_scores + video_scores:
         category = str(score_item.get("category", "")).strip()
         if not category:
             continue
@@ -181,9 +204,10 @@ def _save_feedback(session: Session, submission: Submission, raw_result: dict[st
 
 def _build_summary(raw_result: dict[str, Any]) -> str:
     ppt_summary = raw_result.get("ppt", {}).get("ppt_summary")
+    video_summary = raw_result.get("video", {}).get("video_summary")
     repository_analysis = raw_result.get("repository", {}).get("repository_analysis", {})
     repo_summary = repository_analysis.get("executive_summary")
-    parts = [part for part in [ppt_summary, repo_summary] if part]
+    parts = [part for part in [ppt_summary, video_summary, repo_summary] if part]
     if parts:
         return "\n\n".join(parts)
     return "Analysis completed. See raw_result for details."
