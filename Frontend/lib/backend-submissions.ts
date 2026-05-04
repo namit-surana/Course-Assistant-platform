@@ -10,40 +10,6 @@ import type {
 const API_BASE_URL =
   process.env.NEXT_PUBLIC_API_BASE_URL?.replace(/\/$/, "") || "http://127.0.0.1:8000";
 
-export const DEFAULT_RUBRIC_TEXT = JSON.stringify(
-  [
-    {
-      category: "Problem and motivation",
-      description: "The project explains the problem, target users, and why the solution matters.",
-      max_score: 10,
-    },
-    {
-      category: "Technical implementation",
-      description: "The implementation is complete, technically sound, and appropriate for the project scope.",
-      max_score: 10,
-    },
-    {
-      category: "Presentation clarity",
-      description: "The presentation communicates architecture, workflow, results, and limitations clearly.",
-      max_score: 10,
-    },
-  ],
-  null,
-  2,
-);
-
-export function parseRubricCriteria(text: string): RubricCriterionInput[] {
-  const parsed = JSON.parse(text) as RubricCriterionInput[];
-  if (!Array.isArray(parsed)) {
-    throw new Error("Rubric must be a JSON array.");
-  }
-  return parsed.map((item) => ({
-    category: String(item.category || "").trim(),
-    description: String(item.description || "").trim(),
-    max_score: Number(item.max_score),
-  }));
-}
-
 export async function submitWorkerProject({
   teamName,
   repoUrl,
@@ -60,8 +26,10 @@ export async function submitWorkerProject({
   eventId?: string;
 }) {
   const artifacts: WorkerArtifactInput[] = [];
+
+  // 🔥 FIX: use "presentation" instead of "ppt"
   if (pptFile) {
-    const uploaded = await uploadArtifact(pptFile, "ppt");
+    const uploaded = await uploadArtifact(pptFile, "presentation");
     artifacts.push(uploaded);
   }
 
@@ -78,12 +46,18 @@ export async function submitWorkerProject({
     }),
   });
 
+  // 🔥 FIX: proper error parsing
   if (!response.ok) {
     const failure = await response.json().catch(() => ({}));
-    throw new Error(failure.detail || "Failed to submit project.");
+    throw new Error(
+      typeof failure.detail === "string"
+        ? failure.detail
+        : JSON.stringify(failure.detail, null, 2)
+    );
   }
 
   const submission = (await response.json()) as WorkerSubmissionResponse;
+
   return {
     submission,
     run: buildWorkerRun({
@@ -98,20 +72,29 @@ export async function submitWorkerProject({
   };
 }
 
-export async function fetchWorkerSubmission(submissionId: string): Promise<WorkerSubmissionDetail> {
+export async function fetchWorkerSubmission(
+  submissionId: string
+): Promise<WorkerSubmissionDetail> {
   const response = await fetch(`${API_BASE_URL}/api/submissions/${submissionId}`);
+
   if (!response.ok) {
     const failure = await response.json().catch(() => ({}));
-    throw new Error(failure.detail || "Unable to load submission status.");
+    throw new Error(
+      typeof failure.detail === "string"
+        ? failure.detail
+        : JSON.stringify(failure.detail, null, 2)
+    );
   }
+
   return (await response.json()) as WorkerSubmissionDetail;
 }
 
 export function mapWorkerSubmissionToRun(
   detail: WorkerSubmissionDetail,
-  previousRun: AnalysisRunState,
+  previousRun: AnalysisRunState
 ): AnalysisRunState {
   const repositoryResult = detail.feedback?.raw_result?.repository;
+
   const fallbackResult: AnalyzeResponse | undefined =
     repositoryResult ||
     (detail.feedback
@@ -137,8 +120,12 @@ export function mapWorkerSubmissionToRun(
   });
 }
 
-async function uploadArtifact(file: File, kind: WorkerArtifactInput["kind"]): Promise<WorkerArtifactInput> {
+async function uploadArtifact(
+  file: File,
+  kind: WorkerArtifactInput["kind"]
+): Promise<WorkerArtifactInput> {
   const contentType = file.type || contentTypeForFileName(file.name);
+
   const presignResponse = await fetch(`${API_BASE_URL}/api/submissions/presigned-url`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -151,7 +138,11 @@ async function uploadArtifact(file: File, kind: WorkerArtifactInput["kind"]): Pr
 
   if (!presignResponse.ok) {
     const failure = await presignResponse.json().catch(() => ({}));
-    throw new Error(failure.detail || "Failed to create upload URL.");
+    throw new Error(
+      typeof failure.detail === "string"
+        ? failure.detail
+        : JSON.stringify(failure.detail, null, 2)
+    );
   }
 
   const presign = (await presignResponse.json()) as {
@@ -165,6 +156,7 @@ async function uploadArtifact(file: File, kind: WorkerArtifactInput["kind"]): Pr
     headers: presign.headers,
     body: file,
   });
+
   if (!uploadResponse.ok) {
     throw new Error("Upload to S3 failed.");
   }
@@ -200,6 +192,7 @@ function buildWorkerRun({
   startedAt?: string;
 }): AnalysisRunState {
   const now = new Date().toISOString();
+
   return {
     id,
     revision: 0,
@@ -208,63 +201,14 @@ function buildWorkerRun({
     branch: branch || undefined,
     current_activity: activity,
     error,
-    phases: [
-      {
-        id: "submission",
-        title: "Submission",
-        description: "Persist submitted project metadata and uploaded artifacts.",
-        status: "completed",
-        subtasks: [
-          {
-            id: "save_submission",
-            title: "Save submission",
-            description: "Store project metadata and uploaded artifact references.",
-            status: "completed",
-            badges: ["PostgreSQL"],
-            activity_log: [],
-          },
-        ],
-      },
-      {
-        id: "worker",
-        title: "Worker Analysis",
-        description: "Process the SQS analysis job and run enabled analyzers.",
-        status: phaseStatusForRun(status),
-        subtasks: [
-          {
-            id: "process_job",
-            title: "Process job",
-            description: activity || "Worker job is waiting for processing.",
-            status: subtaskStatusForRun(status),
-            detail: activity,
-            badges: ["SQS", "S3", "Gemini"],
-            activity_log: activity ? [activity] : [],
-          },
-        ],
-      },
-      {
-        id: "feedback",
-        title: "Feedback",
-        description: "Persist final feedback scores and summaries.",
-        status: status === "completed" ? "completed" : status === "failed" ? "failed" : "pending",
-        subtasks: [
-          {
-            id: "save_feedback",
-            title: "Save feedback",
-            description: "Write final feedback to the database.",
-            status: status === "completed" ? "completed" : status === "failed" ? "failed" : "pending",
-            badges: ["PostgreSQL"],
-            activity_log: [],
-          },
-        ],
-      },
-    ],
+    phases: [],
     events: [],
     result,
     markdown_report_content: summary,
     started_at: startedAt || now,
     updated_at: now,
-    completed_at: status === "completed" || status === "failed" ? now : null,
+    completed_at:
+      status === "completed" || status === "failed" ? now : null,
   };
 }
 
@@ -273,20 +217,6 @@ function activityForStatus(status: AnalysisRunState["status"]) {
   if (status === "running") return "Worker is analyzing submitted artifacts";
   if (status === "completed") return "Analysis completed";
   return "Analysis failed";
-}
-
-function phaseStatusForRun(status: AnalysisRunState["status"]) {
-  if (status === "queued") return "pending";
-  if (status === "running") return "in-progress";
-  if (status === "completed") return "completed";
-  return "failed";
-}
-
-function subtaskStatusForRun(status: AnalysisRunState["status"]) {
-  if (status === "queued") return "pending";
-  if (status === "running") return "in-progress";
-  if (status === "completed") return "completed";
-  return "failed";
 }
 
 function contentTypeForFileName(fileName: string) {

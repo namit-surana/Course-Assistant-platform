@@ -1,27 +1,48 @@
 import { create } from "zustand";
-import type { EvalEvent, Submission, AnalysisRunState, VoiceStatus, VoiceTranscriptArtifact } from "./types";
-import { createEvent, fetchEventSubmissions, fetchEvents, type CreateEventInput } from "./events-api";
+import type {
+  EvalEvent,
+  Submission,
+  AnalysisRunState,
+  VoiceStatus,
+  VoiceTranscriptArtifact,
+} from "./types";
+import {
+  createEvent,
+  deleteEvent as deleteEventApi,
+  fetchEventSubmissions,
+  fetchEvents,
+  type CreateEventInput,
+} from "./events-api";
 
 interface EventsStore {
   events: EvalEvent[];
   isLoadingEvents: boolean;
   eventsError: string | null;
+
   loadEvents: () => Promise<void>;
   createEvent: (event: CreateEventInput) => Promise<EvalEvent>;
+  deleteEvent: (eventId: string) => Promise<void>;
   addEvent: (event: EvalEvent) => void;
+
   submissions: Record<string, Submission[]>;
   loadSubmissions: (eventId: string) => Promise<void>;
   addSubmission: (eventId: string, submission: Submission) => void;
-  updateSubmission: (eventId: string, runId: string, run: AnalysisRunState) => void;
+  updateSubmission: (
+    eventId: string,
+    runId: string,
+    run: AnalysisRunState
+  ) => void;
+
   updateSubmissionVoiceStatus: (
     eventId: string,
     submissionId: string,
-    status: VoiceStatus,
+    status: VoiceStatus
   ) => void;
+
   updateSubmissionVoiceTranscript: (
     eventId: string,
     submissionId: string,
-    transcript: VoiceTranscriptArtifact,
+    transcript: VoiceTranscriptArtifact
   ) => void;
 }
 
@@ -29,29 +50,50 @@ export const useEventsStore = create<EventsStore>((set) => ({
   events: [],
   isLoadingEvents: false,
   eventsError: null,
+
   loadEvents: async () => {
     set({ isLoadingEvents: true, eventsError: null });
+
     try {
       const events = await fetchEvents();
       set({ events, isLoadingEvents: false });
     } catch (error) {
       set({
         isLoadingEvents: false,
-        eventsError: error instanceof Error ? error.message : "Unable to load events.",
+        eventsError:
+          error instanceof Error ? error.message : "Unable to load events.",
       });
     }
   },
+
   createEvent: async (event) => {
     const created = await createEvent(event);
     set((state) => ({ events: [created, ...state.events] }));
     return created;
   },
+
+  deleteEvent: async (eventId) => {
+    await deleteEventApi(eventId);
+
+    set((state) => {
+      const nextSubmissions = { ...state.submissions };
+      delete nextSubmissions[eventId];
+
+      return {
+        events: state.events.filter((event) => event.id !== eventId),
+        submissions: nextSubmissions,
+      };
+    });
+  },
+
   addEvent: (event) =>
     set((state) => ({ events: [event, ...state.events] })),
 
   submissions: {},
+
   loadSubmissions: async (eventId) => {
     const submissions = await fetchEventSubmissions(eventId);
+
     set((state) => ({
       submissions: {
         ...state.submissions,
@@ -59,6 +101,7 @@ export const useEventsStore = create<EventsStore>((set) => ({
       },
     }));
   },
+
   addSubmission: (eventId, submission) =>
     set((state) => ({
       submissions: {
@@ -66,6 +109,7 @@ export const useEventsStore = create<EventsStore>((set) => ({
         [eventId]: [submission, ...(state.submissions[eventId] ?? [])],
       },
     })),
+
   updateSubmission: (eventId, runId, run) =>
     set((state) => ({
       submissions: {
@@ -75,6 +119,7 @@ export const useEventsStore = create<EventsStore>((set) => ({
         ),
       },
     })),
+
   updateSubmissionVoiceStatus: (eventId, submissionId, status) =>
     set((state) => ({
       submissions: {
@@ -84,6 +129,7 @@ export const useEventsStore = create<EventsStore>((set) => ({
         ),
       },
     })),
+
   updateSubmissionVoiceTranscript: (eventId, submissionId, transcript) =>
     set((state) => ({
       submissions: {

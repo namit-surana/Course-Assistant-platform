@@ -2,12 +2,8 @@
 
 import { useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { X, GitBranch, Loader2 } from "lucide-react";
-import {
-  DEFAULT_RUBRIC_TEXT,
-  parseRubricCriteria,
-  submitWorkerProject,
-} from "@/lib/backend-submissions";
+import { X, Loader2 } from "lucide-react";
+import { submitWorkerProject } from "@/lib/backend-submissions";
 import { useEventsStore } from "@/lib/events-store";
 import type { Submission } from "@/lib/types";
 import { cn } from "@/lib/utils";
@@ -19,12 +15,15 @@ interface Props {
 }
 
 export function AddSubmissionModal({ eventId, open, onClose }: Props) {
+  const event = useEventsStore((s) =>
+    s.events.find((e) => e.id === eventId)
+  );
   const addSubmission = useEventsStore((s) => s.addSubmission);
+
   const [teamName, setTeamName] = useState("");
   const [repoUrl, setRepoUrl] = useState("");
   const [branch, setBranch] = useState("");
   const [pptFile, setPptFile] = useState<File | null>(null);
-  const [rubricText, setRubricText] = useState(DEFAULT_RUBRIC_TEXT);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -33,7 +32,6 @@ export function AddSubmissionModal({ eventId, open, onClose }: Props) {
     setRepoUrl("");
     setBranch("");
     setPptFile(null);
-    setRubricText(DEFAULT_RUBRIC_TEXT);
     setError(null);
     setIsSubmitting(false);
   }
@@ -47,19 +45,42 @@ export function AddSubmissionModal({ eventId, open, onClose }: Props) {
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     if (!teamName.trim() || !repoUrl.trim()) return;
+
     setError(null);
     setIsSubmitting(true);
 
     try {
-      const rubricCriteria = parseRubricCriteria(rubricText);
-      const { submission: workerSubmission, run } = await submitWorkerProject({
-        teamName: teamName.trim(),
-        repoUrl: repoUrl.trim(),
-        branch: branch.trim() || undefined,
-        pptFile,
-        rubricCriteria,
-        eventId,
-      });
+      // 🔥 Dynamic rubric (ONLY valid weights)
+      const presentationRubric = Object.values(
+        event?.criteriaConfig?.criteria || {}
+      )
+        .filter(
+          (c: any) =>
+            c.artifactId === "presentation" &&
+            c.selected &&
+            Number(c.weight) > 0
+        )
+        .map((c: any) => ({
+          category: c.label,
+          description: c.description,
+          max_score: Number(c.weight),
+        }));
+
+      if (pptFile && presentationRubric.length === 0) {
+        throw new Error(
+          "No valid presentation rubric found. Ask organizer to configure criteria."
+        );
+      }
+
+      const { submission: workerSubmission, run } =
+        await submitWorkerProject({
+          teamName: teamName.trim(),
+          repoUrl: repoUrl.trim(),
+          branch: branch.trim() || undefined,
+          pptFile,
+          rubricCriteria: presentationRubric,
+          eventId,
+        });
 
       const submission: Submission = {
         id: workerSubmission.id,
@@ -85,7 +106,10 @@ export function AddSubmissionModal({ eventId, open, onClose }: Props) {
     }
   }
 
-  const canSubmit = teamName.trim().length > 0 && repoUrl.trim().length > 0 && !isSubmitting;
+  const canSubmit =
+    teamName.trim().length > 0 &&
+    repoUrl.trim().length > 0 &&
+    !isSubmitting;
 
   return (
     <AnimatePresence>
@@ -93,7 +117,6 @@ export function AddSubmissionModal({ eventId, open, onClose }: Props) {
         <>
           {/* Backdrop */}
           <motion.div
-            key="backdrop"
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
@@ -103,165 +126,109 @@ export function AddSubmissionModal({ eventId, open, onClose }: Props) {
 
           {/* Modal */}
           <motion.div
-            key="modal"
             initial={{ opacity: 0, scale: 0.96, y: 16 }}
             animate={{ opacity: 1, scale: 1, y: 0 }}
             exit={{ opacity: 0, scale: 0.96, y: 16 }}
-            transition={{ duration: 0.2, ease: [0.25, 0.46, 0.45, 0.94] }}
+            transition={{ duration: 0.2 }}
             className="fixed inset-0 z-50 flex items-center justify-center p-4"
           >
-            <div className="max-h-[90vh] w-full max-w-md overflow-y-auto rounded-2xl border border-neutral-800 bg-neutral-950 shadow-2xl">
+            <div className="w-full max-w-md rounded-2xl backdrop-blur-xl bg-neutral-950/80 border border-neutral-800 shadow-2xl">
+
               {/* Header */}
-              <div className="flex items-center justify-between border-b border-neutral-800 px-6 py-4">
+              <div className="flex items-center justify-between px-6 py-4 border-b border-neutral-800">
                 <div>
-                  <h2 className="text-base font-semibold text-white">Add Team Submission</h2>
-                  <p className="text-xs text-neutral-400 mt-0.5">
-                    Enter the GitHub repo to start AI analysis
+                  <h2 className="text-lg font-semibold text-white">
+                    Add Submission
+                  </h2>
+                  <p className="text-xs text-neutral-400">
+                    Submit your project for AI evaluation
                   </p>
                 </div>
-                <button
-                  onClick={handleClose}
-                  className="rounded-lg p-1.5 text-neutral-400 hover:bg-neutral-800 hover:text-white transition-colors"
-                >
-                  <X className="h-4 w-4" />
+
+                <button onClick={handleClose}>
+                  <X className="h-4 w-4 text-neutral-400 hover:text-white" />
                 </button>
               </div>
 
               {/* Form */}
-              <form onSubmit={handleSubmit} className="px-6 py-5 space-y-4">
-                {/* Team Name */}
-                <div className="space-y-1.5">
-                  <label className="text-sm font-semibold text-neutral-300">
-                    Team Name <span className="text-violet-400">*</span>
-                  </label>
-                  <input
-                    type="text"
-                    value={teamName}
-                    onChange={(e) => setTeamName(e.target.value)}
-                    placeholder="e.g. Team Nexus"
-                    className={cn(
-                      "w-full h-11 rounded-lg border border-neutral-700 bg-neutral-900",
-                      "px-3.5 text-sm text-white placeholder:text-neutral-600",
-                      "focus:outline-none focus:border-violet-500 transition-colors"
-                    )}
-                    disabled={isSubmitting}
-                  />
-                </div>
+              <form onSubmit={handleSubmit} className="px-6 py-6 space-y-5">
 
-                {/* GitHub URL */}
-                <div className="space-y-1.5">
-                  <label className="text-sm font-semibold text-neutral-300">
-                    GitHub Repository URL <span className="text-violet-400">*</span>
-                  </label>
-                  <input
-                    type="url"
-                    value={repoUrl}
-                    onChange={(e) => setRepoUrl(e.target.value)}
-                    placeholder="https://github.com/owner/repo"
-                    className={cn(
-                      "w-full h-11 rounded-lg border border-neutral-700 bg-neutral-900",
-                      "px-3.5 text-sm text-white placeholder:text-neutral-600",
-                      "focus:outline-none focus:border-violet-500 transition-colors"
-                    )}
-                    disabled={isSubmitting}
-                  />
-                </div>
+                {/* Team */}
+                <input
+                  type="text"
+                  placeholder="Team Name"
+                  value={teamName}
+                  onChange={(e) => setTeamName(e.target.value)}
+                  className="w-full h-11 rounded-xl bg-neutral-900 border border-neutral-700 px-4 text-white placeholder:text-neutral-500 focus:ring-2 focus:ring-violet-500 outline-none"
+                />
+
+                {/* Repo */}
+                <input
+                  type="url"
+                  placeholder="GitHub Repository URL"
+                  value={repoUrl}
+                  onChange={(e) => setRepoUrl(e.target.value)}
+                  className="w-full h-11 rounded-xl bg-neutral-900 border border-neutral-700 px-4 text-white placeholder:text-neutral-500 focus:ring-2 focus:ring-violet-500 outline-none"
+                />
 
                 {/* Branch */}
-                <div className="space-y-1.5">
-                  <label className="text-sm font-semibold text-neutral-300">
-                    Branch{" "}
-                    <span className="text-neutral-500 font-normal">(optional, default: main)</span>
+                <input
+                  type="text"
+                  placeholder="Branch (optional)"
+                  value={branch}
+                  onChange={(e) => setBranch(e.target.value)}
+                  className="w-full h-11 rounded-xl bg-neutral-900 border border-neutral-700 px-4 text-white placeholder:text-neutral-500 focus:ring-2 focus:ring-violet-500 outline-none"
+                />
+
+                {/* Upload */}
+                <div className="space-y-2">
+                  <label className="text-sm text-neutral-300">
+                    Upload Presentation (optional)
                   </label>
-                  <div className="relative">
-                    <GitBranch className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-neutral-500" />
+
+                  <label className="flex flex-col items-center justify-center w-full h-24 border-2 border-dashed border-neutral-700 rounded-xl cursor-pointer hover:border-violet-500 transition">
+                    <span className="text-xs text-neutral-400">
+                      Click to upload PPT / PDF
+                    </span>
                     <input
-                      type="text"
-                      value={branch}
-                      onChange={(e) => setBranch(e.target.value)}
-                      placeholder="main"
-                      className={cn(
-                        "w-full h-11 rounded-lg border border-neutral-700 bg-neutral-900",
-                        "pl-9 pr-3.5 text-sm text-white placeholder:text-neutral-600",
-                        "focus:outline-none focus:border-violet-500 transition-colors"
-                      )}
-                      disabled={isSubmitting}
+                      type="file"
+                      accept=".pptx,.pdf"
+                      className="hidden"
+                      onChange={(e) =>
+                        setPptFile(e.target.files?.[0] || null)
+                      }
                     />
-                  </div>
-                </div>
-
-                {/* PPT/PDF artifact */}
-                <div className="space-y-1.5">
-                  <label className="text-sm font-semibold text-neutral-300">
-                    Presentation <span className="text-neutral-500 font-normal">(optional)</span>
                   </label>
-                  <input
-                    type="file"
-                    accept=".pptx,.pdf,application/pdf,application/vnd.openxmlformats-officedocument.presentationml.presentation"
-                    onChange={(event) => setPptFile(event.target.files?.[0] ?? null)}
-                    className={cn(
-                      "w-full rounded-lg border border-neutral-700 bg-neutral-900 px-3.5 py-2 text-sm text-neutral-300",
-                      "file:mr-3 file:rounded-md file:border-0 file:bg-neutral-800 file:px-2.5 file:py-1 file:text-xs file:text-neutral-200",
-                      "focus:outline-none focus:border-violet-500 transition-colors",
-                    )}
-                    disabled={isSubmitting}
-                  />
-                </div>
 
-                {/* Rubric */}
-                <div className="space-y-1.5">
-                  <label className="text-sm font-semibold text-neutral-300">
-                    Rubric JSON
-                  </label>
-                  <textarea
-                    value={rubricText}
-                    onChange={(event) => setRubricText(event.target.value)}
-                    rows={6}
-                    className={cn(
-                      "w-full rounded-lg border border-neutral-700 bg-neutral-900 px-3.5 py-2 font-mono text-xs text-neutral-200 placeholder:text-neutral-600",
-                      "focus:outline-none focus:border-violet-500 transition-colors",
-                    )}
-                    disabled={isSubmitting}
-                  />
+                  {pptFile && (
+                    <p className="text-xs text-neutral-400">
+                      {pptFile.name}
+                    </p>
+                  )}
                 </div>
 
                 {/* Error */}
                 {error && (
-                  <p className="text-xs text-red-400 bg-red-500/10 border border-red-500/20 rounded-lg px-3 py-2">
+                  <div className="text-sm text-red-400 bg-red-500/10 px-3 py-2 rounded-lg border border-red-500/20">
                     {error}
-                  </p>
+                  </div>
                 )}
 
-                {/* Actions */}
-                <div className="flex items-center gap-3 pt-1">
-                  <button
-                    type="button"
-                    onClick={handleClose}
-                    disabled={isSubmitting}
-                    className="flex-1 h-10 rounded-lg border border-neutral-700 text-sm font-medium text-neutral-300 hover:bg-neutral-800 transition-colors disabled:opacity-50"
-                  >
-                    Cancel
-                  </button>
-                  <button
-                    type="submit"
-                    disabled={!canSubmit}
-                    className={cn(
-                      "flex-1 h-10 rounded-lg text-sm font-semibold transition-all",
-                      "bg-violet-600 text-white hover:bg-violet-500",
-                      "disabled:opacity-40 disabled:cursor-not-allowed",
-                      "flex items-center justify-center gap-2"
-                    )}
-                  >
-                    {isSubmitting ? (
-                      <>
-                        <Loader2 className="h-4 w-4 animate-spin" />
-                        Starting…
-                      </>
-                    ) : (
-                      "Start Analysis →"
-                    )}
-                  </button>
-                </div>
+                {/* Button */}
+                <button
+                  type="submit"
+                  disabled={!canSubmit}
+                  className="w-full h-11 rounded-xl font-semibold text-white bg-gradient-to-r from-violet-600 to-purple-500 hover:from-violet-500 hover:to-purple-400 transition disabled:opacity-40 flex items-center justify-center gap-2"
+                >
+                  {isSubmitting ? (
+                    <>
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                      Submitting...
+                    </>
+                  ) : (
+                    "🚀 Submit Project"
+                  )}
+                </button>
               </form>
             </div>
           </motion.div>

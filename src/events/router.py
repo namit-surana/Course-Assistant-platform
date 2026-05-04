@@ -1,12 +1,17 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Response
 from sqlalchemy.orm import Session
 
 from src.db.session import get_db_session
 from src.events.schemas import EventCreateRequest, EventResponse
-from src.events.service import build_event_response, create_event, get_event, list_events
-
+from src.events.service import (
+    build_event_response,
+    create_event,
+    delete_event,
+    get_event,
+    list_events,
+)
 
 router = APIRouter(prefix="/api/events", tags=["events"])
 
@@ -34,3 +39,18 @@ def get_evaluation_event(
     if event is None:
         raise HTTPException(status_code=404, detail="Event not found.")
     return build_event_response(session, event)
+
+
+@router.delete("/{event_id}", status_code=204)
+def delete_evaluation_event(
+    event_id: str,
+    session: Session = Depends(get_db_session),
+) -> Response:
+    event = get_event(session, event_id)
+
+    if event is None:
+        raise HTTPException(status_code=404, detail="Event not found.")
+
+    delete_event(session, event)
+
+    return Response(status_code=204)
