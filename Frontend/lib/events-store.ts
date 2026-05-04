@@ -1,5 +1,13 @@
 import { create } from "zustand";
-import type { EvalEvent, Submission, AnalysisRunState, VoiceStatus, VoiceTranscriptArtifact } from "./types";
+import type {
+  EvalEvent,
+  Submission,
+  AnalysisRunState,
+  VoiceStatus,
+  VoiceTranscriptArtifact,
+  VideoAnalysisStatus,
+  WorkerVideoAnalysisJob,
+} from "./types";
 import { createEvent, fetchEventSubmissions, fetchEvents, type CreateEventInput } from "./events-api";
 
 interface EventsStore {
@@ -22,6 +30,15 @@ interface EventsStore {
     eventId: string,
     submissionId: string,
     transcript: VoiceTranscriptArtifact,
+  ) => void;
+  updateSubmissionVideoState: (
+    eventId: string,
+    submissionId: string,
+    patch: {
+      videoAnalysisStatus?: VideoAnalysisStatus;
+      videoAnalysisJobId?: string;
+      videoAnalysisResult?: WorkerVideoAnalysisJob | null;
+    },
   ) => void;
 }
 
@@ -91,6 +108,25 @@ export const useEventsStore = create<EventsStore>((set) => ({
         [eventId]: (state.submissions[eventId] ?? []).map((s) =>
           s.id === submissionId
             ? { ...s, voiceTranscript: transcript, voiceStatus: "completed" }
+            : s
+        ),
+      },
+    })),
+  updateSubmissionVideoState: (eventId, submissionId, patch) =>
+    set((state) => ({
+      submissions: {
+        ...state.submissions,
+        [eventId]: (state.submissions[eventId] ?? []).map((s) =>
+          s.id === submissionId
+            ? {
+                ...s,
+                videoAnalysisStatus: patch.videoAnalysisStatus ?? s.videoAnalysisStatus,
+                videoAnalysisJobId: patch.videoAnalysisJobId ?? s.videoAnalysisJobId,
+                videoAnalysisResult:
+                  patch.videoAnalysisResult !== undefined
+                    ? patch.videoAnalysisResult
+                    : s.videoAnalysisResult,
+              }
             : s
         ),
       },

@@ -34,6 +34,7 @@ export function SubmissionCard({ submission, eventId, isSelected = false, onClic
   const sourceRef = useRef<EventSource | null>(null);
   const run = submission.run;
   const voiceStatus = submission.voiceStatus ?? "idle";
+  const videoStatus = submission.videoAnalysisStatus ?? "idle";
 
   useEffect(() => {
     if (run.status !== "queued" && run.status !== "running") return;
@@ -163,7 +164,7 @@ export function SubmissionCard({ submission, eventId, isSelected = false, onClic
       )}
 
       <p className="px-4 pb-3 text-[11px] text-neutral-500">
-        Voice: {voiceStatus}
+        Voice: {voiceStatus} • Video: {videoStatus}
       </p>
     </motion.button>
   );

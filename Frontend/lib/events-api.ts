@@ -70,6 +70,8 @@ export async function fetchEventSubmissions(eventId: string): Promise<Submission
   }
   const submissions = (await response.json()) as WorkerSubmissionDetail[];
   return submissions.map((submission) => {
+    const videoArtifact = submission.artifacts.find((artifact) => artifact.kind === "video");
+    const pptArtifact = submission.artifacts.find((artifact) => artifact.kind === "ppt");
     const run = mapWorkerSubmissionToRun(submission, {
       id: submission.id,
       revision: 0,
@@ -90,6 +92,11 @@ export async function fetchEventSubmissions(eventId: string): Promise<Submission
       runId: submission.id,
       run,
       workerSubmissionId: submission.id,
+      pptFileName: pptArtifact?.file_name || undefined,
+      videoFileName: videoArtifact?.file_name || undefined,
+      videoObjectKey: videoArtifact?.object_key || undefined,
+      videoAnalysisStatus: "idle",
+      videoAnalysisResult: null,
       createdAt: submission.created_at,
     };
   });

@@ -21,6 +21,7 @@ export function TeamSubmitPage({ eventId }: { eventId: string }) {
   const [repoUrl, setRepoUrl] = useState("");
   const [branch, setBranch] = useState("");
   const [pptFile, setPptFile] = useState<File | null>(null);
+  const [videoFile, setVideoFile] = useState<File | null>(null);
   const [rubricText, setRubricText] = useState(DEFAULT_RUBRIC_TEXT);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -39,6 +40,7 @@ export function TeamSubmitPage({ eventId }: { eventId: string }) {
         repoUrl: repoUrl.trim(),
         branch: branch.trim() || undefined,
         pptFile,
+        videoFile,
         rubricCriteria,
         eventId,
       });
@@ -54,6 +56,9 @@ export function TeamSubmitPage({ eventId }: { eventId: string }) {
         workerSubmissionId: workerSubmission.id,
         analysisJobId: workerSubmission.analysis_job_id,
         pptFileName: pptFile?.name,
+        videoFileName: videoFile?.name,
+        videoAnalysisStatus: "idle",
+        videoAnalysisResult: null,
         voiceStatus: "idle",
         voiceTranscript: null,
         createdAt: new Date().toISOString(),
@@ -192,6 +197,23 @@ export function TeamSubmitPage({ eventId }: { eventId: string }) {
 
             <div className="space-y-1.5">
               <label className="text-sm font-semibold text-neutral-300">
+                Demo video <span className="text-neutral-500 font-normal">(optional)</span>
+              </label>
+              <input
+                type="file"
+                accept=".mp4,.webm,.mov,.mkv,video/*"
+                onChange={(event) => setVideoFile(event.target.files?.[0] ?? null)}
+                className={cn(
+                  "w-full rounded-lg border border-neutral-700 bg-neutral-900 px-3.5 py-2 text-sm text-neutral-300",
+                  "file:mr-3 file:rounded-md file:border-0 file:bg-neutral-800 file:px-2.5 file:py-1 file:text-xs file:text-neutral-200",
+                  "focus:outline-none focus:border-violet-500",
+                )}
+                disabled={isSubmitting}
+              />
+            </div>
+
+            <div className="space-y-1.5">
+              <label className="text-sm font-semibold text-neutral-300">
                 Rubric JSON
               </label>
               <textarea
@@ -227,7 +249,7 @@ export function TeamSubmitPage({ eventId }: { eventId: string }) {
                   Submitting…
                 </>
               ) : (
-                "Submit repository"
+                "Submit project"
               )}
             </button>
           </form>

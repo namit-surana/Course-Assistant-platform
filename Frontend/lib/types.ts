@@ -141,6 +141,7 @@ export interface PlanTask {
 // ── EvalAI submission types ───────────────────────────────────────────────────
 
 export type VoiceStatus = "idle" | "recording" | "processing" | "completed" | "failed";
+export type VideoAnalysisStatus = "idle" | "pending" | "running" | "completed" | "failed";
 
 export interface VoiceTranscriptSegment {
   text: string;
@@ -171,6 +172,11 @@ export interface Submission {
   workerSubmissionId?: string;
   analysisJobId?: string;
   pptFileName?: string;
+  videoFileName?: string;
+  videoObjectKey?: string;
+  videoAnalysisJobId?: string;
+  videoAnalysisStatus?: VideoAnalysisStatus;
+  videoAnalysisResult?: WorkerVideoAnalysisJob | null;
   voiceStatus?: VoiceStatus;
   voiceTranscript?: VoiceTranscriptArtifact | null;
   createdAt: string;
@@ -231,6 +237,50 @@ export interface WorkerSubmissionDetail {
   status: RunStatus;
   error_message?: string | null;
   feedback?: WorkerFeedbackReport | null;
+  artifacts: Array<{
+    id: string;
+    kind: string;
+    bucket: string;
+    object_key: string;
+    file_name?: string | null;
+    content_type?: string | null;
+    size_bytes?: number | null;
+    status: string;
+  }>;
   created_at: string;
   updated_at: string;
+}
+
+export interface WorkerVideoAnalysisStartResponse {
+  submission_id: string;
+  video_artifact_id: string;
+  video_file_name?: string | null;
+  job_id: string;
+  status: "pending" | "running" | "completed" | "failed";
+}
+
+export interface WorkerVideoAnalysisJob {
+  job_id: string;
+  status: "pending" | "running" | "completed" | "failed";
+  video_path?: string | null;
+  created_at: string;
+  updated_at: string;
+  raw_output?: string | null;
+  parsed?: {
+    summary?: string;
+    rubric?: Array<{
+      id?: string;
+      score?: string;
+      evidence?: string;
+      timestamps?: string;
+    }>;
+    feature_coverage?: Array<{
+      feature?: string;
+      status?: string;
+      evidence?: string;
+    }>;
+    gaps_and_risks?: string[];
+    limitations?: string;
+  } | null;
+  error?: string | null;
 }
