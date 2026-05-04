@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from pathlib import Path
+
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import select
 from sqlalchemy.orm import Session, selectinload
@@ -7,7 +9,7 @@ from sqlalchemy.orm import Session, selectinload
 from src.aws.s3_service import S3StorageService, build_upload_object_key
 from src.aws.sqs_service import SqsQueueService
 from src.config.settings import Settings, get_settings
-from src.db.models import FeedbackReport, Submission
+from src.db.models import FeedbackReport, Submission, SubmissionArtifact
 from src.db.session import get_db_session
 from src.submissions.schemas import (
     FeedbackReportResponse,
@@ -17,9 +19,12 @@ from src.submissions.schemas import (
     SubmissionCreateRequest,
     SubmissionDetailResponse,
     SubmissionResponse,
+    SubmissionVideoAnalysisStartRequest,
+    SubmissionVideoAnalysisStartResponse,
     SubmissionArtifactResponse,
 )
 from src.submissions.service import create_submission
+from src.video_agent.services.job_runner import start_video_analysis_job
 
 
 router = APIRouter(prefix="/api/submissions", tags=["submissions"])
@@ -76,6 +81,62 @@ def submit_project(
         analysis_job_id=created.analysis_job.id,
         sqs_message_id=created.analysis_job.sqs_message_id,
         queued=created.queued,
+    )
+
+
+@router.post(
+    "/{submission_id}/video-analysis/start",
+    response_model=SubmissionVideoAnalysisStartResponse,
+)
+def start_submission_video_analysis(
+    submission_id: str,
+    request: SubmissionVideoAnalysisStartRequest,
+    session: Session = Depends(get_db_session),
+    settings: Settings = Depends(get_settings),
+) -> SubmissionVideoAnalysisStartResponse:
+    submission = session.get(
+        Submission,
+        submission_id,
+        options=[selectinload(Submission.artifacts)],
+    )
+    if submission is None:
+        raise HTTPException(status_code=404, detail="Submission not found.")
+    if not settings.GEMINI_API_KEY:
+        raise HTTPException(status_code=503, detail="GEMINI_API_KEY is not configured.")
+
+    video_artifact = _pick_video_artifact(submission.artifacts)
+    if video_artifact is None:
+        raise HTTPException(status_code=400, detail="No video artifact found for this submission.")
+
+    if not settings.s3_bucket_name:
+        raise HTTPException(status_code=503, detail="S3_BUCKET_NAME is not configured.")
+
+    upload_root = settings.video_upload_dir.resolve()
+    upload_root.mkdir(parents=True, exist_ok=True)
+    local_dir = upload_root / submission.id
+    local_dir.mkdir(parents=True, exist_ok=True)
+    local_name = Path(video_artifact.file_name or "submission-video.mp4").name
+    local_path = local_dir / local_name
+
+    try:
+        storage = S3StorageService(settings)
+        storage.download_file(video_artifact.object_key, local_path)
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"Unable to download submission video: {exc}") from exc
+
+    created = start_video_analysis_job(
+        video_path=local_path,
+        assignment_title=request.assignment_title,
+        required_features=request.required_features,
+    )
+    return SubmissionVideoAnalysisStartResponse(
+        submission_id=submission.id,
+        video_artifact_id=video_artifact.id,
+        video_file_name=video_artifact.file_name,
+        job_id=created.job_id,
+        status=created.status,
     )
 
 
@@ -197,3 +258,11 @@ def _submission_to_detail(submission: Submission) -> SubmissionDetailResponse:
         created_at=submission.created_at,
         updated_at=submission.updated_at,
     )
+
+
+def _pick_video_artifact(artifacts: list[SubmissionArtifact]) -> SubmissionArtifact | None:
+    candidates = [artifact for artifact in artifacts if artifact.kind == "video"]
+    if not candidates:
+        return None
+    candidates.sort(key=lambda artifact: artifact.created_at, reverse=True)
+    return candidates[0]

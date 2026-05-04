@@ -5,6 +5,8 @@ import type {
   WorkerArtifactInput,
   WorkerSubmissionDetail,
   WorkerSubmissionResponse,
+  WorkerVideoAnalysisJob,
+  WorkerVideoAnalysisStartResponse,
 } from "./types";
 
 const API_BASE_URL =
@@ -15,6 +17,7 @@ export async function submitWorkerProject({
   repoUrl,
   branch,
   pptFile,
+  videoFile,
   rubricCriteria,
   eventId,
 }: {
@@ -22,6 +25,7 @@ export async function submitWorkerProject({
   repoUrl: string;
   branch?: string;
   pptFile?: File | null;
+  videoFile?: File | null;
   rubricCriteria: RubricCriterionInput[];
   eventId?: string;
 }) {
@@ -30,6 +34,10 @@ export async function submitWorkerProject({
   // 🔥 FIX: use "presentation" instead of "ppt"
   if (pptFile) {
     const uploaded = await uploadArtifact(pptFile, "presentation");
+    artifacts.push(uploaded);
+  }
+  if (videoFile) {
+    const uploaded = await uploadArtifact(videoFile, "video");
     artifacts.push(uploaded);
   }
 
@@ -87,6 +95,41 @@ export async function fetchWorkerSubmission(
   }
 
   return (await response.json()) as WorkerSubmissionDetail;
+}
+
+export async function startWorkerSubmissionVideoAnalysis({
+  submissionId,
+  assignmentTitle,
+  requiredFeatures,
+}: {
+  submissionId: string;
+  assignmentTitle?: string;
+  requiredFeatures?: string[];
+}): Promise<WorkerVideoAnalysisStartResponse> {
+  const response = await fetch(`${API_BASE_URL}/api/submissions/${submissionId}/video-analysis/start`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      assignment_title: assignmentTitle || "Course project demo",
+      required_features: requiredFeatures || [],
+    }),
+  });
+  if (!response.ok) {
+    const failure = await response.json().catch(() => ({}));
+    throw new Error(failure.detail || "Unable to start video analysis.");
+  }
+  return (await response.json()) as WorkerVideoAnalysisStartResponse;
+}
+
+export async function fetchWorkerVideoAnalysisJob(jobId: string): Promise<WorkerVideoAnalysisJob> {
+  const response = await fetch(`${API_BASE_URL}/api/video-analysis/jobs/${jobId}`, {
+    cache: "no-store",
+  });
+  if (!response.ok) {
+    const failure = await response.json().catch(() => ({}));
+    throw new Error(failure.detail || "Unable to load video analysis job.");
+  }
+  return (await response.json()) as WorkerVideoAnalysisJob;
 }
 
 export function mapWorkerSubmissionToRun(
@@ -222,5 +265,9 @@ function activityForStatus(status: AnalysisRunState["status"]) {
 function contentTypeForFileName(fileName: string) {
   const lower = fileName.toLowerCase();
   if (lower.endsWith(".pdf")) return "application/pdf";
+  if (lower.endsWith(".mp4")) return "video/mp4";
+  if (lower.endsWith(".webm")) return "video/webm";
+  if (lower.endsWith(".mov")) return "video/quicktime";
+  if (lower.endsWith(".mkv")) return "video/x-matroska";
   return "application/vnd.openxmlformats-officedocument.presentationml.presentation";
 }

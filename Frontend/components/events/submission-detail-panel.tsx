@@ -16,6 +16,10 @@ import { ResultsPanel } from "@/components/analyze/results-panel";
 import AgentPlan from "@/components/ui/agent-plan";
 import type { Submission } from "@/lib/types";
 import { useEventsStore } from "@/lib/events-store";
+import {
+  fetchWorkerVideoAnalysisJob,
+  startWorkerSubmissionVideoAnalysis,
+} from "@/lib/backend-submissions";
 
 const API_BASE_URL =
   process.env.NEXT_PUBLIC_API_BASE_URL?.replace(/\/$/, "") || "http://127.0.0.1:8000";
@@ -35,11 +39,15 @@ export function SubmissionDetailPanel({ eventId, submission, onClose }: Props) {
   const planTasks = mapRunToPlan(run);
   const updateVoiceStatus = useEventsStore((s) => s.updateSubmissionVoiceStatus);
   const updateVoiceTranscript = useEventsStore((s) => s.updateSubmissionVoiceTranscript);
+  const updateVideoState = useEventsStore((s) => s.updateSubmissionVideoState);
   const [partialTranscript, setPartialTranscript] = useState("");
   const [recordError, setRecordError] = useState<string | null>(null);
   const [isRecording, setIsRecording] = useState(false);
   const [showFullTranscript, setShowFullTranscript] = useState(false);
   const [copied, setCopied] = useState(false);
+  const [videoError, setVideoError] = useState<string | null>(null);
+  const [videoAssignmentTitle, setVideoAssignmentTitle] = useState("Course project demo");
+  const [videoFeaturesText, setVideoFeaturesText] = useState("");
   const awaitingSaveRef = useRef(false);
   const socketRef = useRef<WebSocket | null>(null);
   const audioContextRef = useRef<AudioContext | null>(null);
@@ -51,6 +59,8 @@ export function SubmissionDetailPanel({ eventId, submission, onClose }: Props) {
 
   const totalPhases = run.phases.length;
   const donePhases  = run.phases.filter((p) => p.status === "completed").length;
+  const videoStatus = submission.videoAnalysisStatus ?? "idle";
+  const hasVideoArtifact = Boolean(submission.videoFileName || submission.videoObjectKey);
 
   useEffect(() => {
     return () => {
@@ -58,6 +68,51 @@ export function SubmissionDetailPanel({ eventId, submission, onClose }: Props) {
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  useEffect(() => {
+    if (!submission.videoAnalysisJobId) {
+      return;
+    }
+    if (videoStatus !== "pending" && videoStatus !== "running") {
+      return;
+    }
+    let active = true;
+    async function refreshVideoJob() {
+      if (!submission.videoAnalysisJobId) {
+        return;
+      }
+      try {
+        const job = await fetchWorkerVideoAnalysisJob(submission.videoAnalysisJobId);
+        if (!active) {
+          return;
+        }
+        updateVideoState(eventId, submission.id, {
+          videoAnalysisStatus: job.status,
+          videoAnalysisResult: job,
+        });
+      } catch (err) {
+        if (!active) {
+          return;
+        }
+        setVideoError(err instanceof Error ? err.message : "Unable to poll video job.");
+        updateVideoState(eventId, submission.id, { videoAnalysisStatus: "failed" });
+      }
+    }
+    void refreshVideoJob();
+    const intervalId = window.setInterval(() => {
+      void refreshVideoJob();
+    }, 1500);
+    return () => {
+      active = false;
+      window.clearInterval(intervalId);
+    };
+  }, [
+    eventId,
+    submission.id,
+    submission.videoAnalysisJobId,
+    updateVideoState,
+    videoStatus,
+  ]);
 
   async function startRecording() {
     setRecordError(null);
@@ -173,6 +228,40 @@ export function SubmissionDetailPanel({ eventId, submission, onClose }: Props) {
     }
   }
 
+  async function startVideoAnalysis() {
+    if (!submission.workerSubmissionId) {
+      setVideoError("Missing submission id.");
+      return;
+    }
+    if (!hasVideoArtifact) {
+      setVideoError("No submitted video artifact found for this team.");
+      return;
+    }
+    setVideoError(null);
+    updateVideoState(eventId, submission.id, {
+      videoAnalysisStatus: "pending",
+      videoAnalysisResult: null,
+    });
+    try {
+      const requiredFeatures = videoFeaturesText
+        .split("\n")
+        .map((line) => line.trim())
+        .filter(Boolean);
+      const started = await startWorkerSubmissionVideoAnalysis({
+        submissionId: submission.workerSubmissionId,
+        assignmentTitle: videoAssignmentTitle.trim() || "Course project demo",
+        requiredFeatures,
+      });
+      updateVideoState(eventId, submission.id, {
+        videoAnalysisJobId: started.job_id,
+        videoAnalysisStatus: started.status,
+      });
+    } catch (err) {
+      setVideoError(err instanceof Error ? err.message : "Unable to start video analysis.");
+      updateVideoState(eventId, submission.id, { videoAnalysisStatus: "failed" });
+    }
+  }
+
   return (
     <div className="flex h-full flex-col overflow-hidden">
       {/* Panel header */}
@@ -263,6 +352,167 @@ export function SubmissionDetailPanel({ eventId, submission, onClose }: Props) {
           ) : null}
           {recordError ? (
             <p className="text-xs text-red-400">{recordError}</p>
+          ) : null}
+        </div>
+        <div className="border-b border-neutral-800 px-4 py-4 space-y-3">
+          <p className="text-xs font-semibold uppercase tracking-wider text-neutral-500">
+            Demo Video Analysis
+          </p>
+          <p className="text-xs text-neutral-400">
+            Uploaded file: {submission.videoFileName ?? "Not submitted"}
+          </p>
+          <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+            <input
+              type="text"
+              value={videoAssignmentTitle}
+              onChange={(event) => setVideoAssignmentTitle(event.target.value)}
+              placeholder="Assignment title"
+              className="w-full rounded-md border border-neutral-700 bg-neutral-900 px-2.5 py-1.5 text-xs text-neutral-200"
+            />
+            <button
+              type="button"
+              onClick={() => void startVideoAnalysis()}
+              disabled={!hasVideoArtifact || videoStatus === "pending" || videoStatus === "running"}
+              className="rounded-lg bg-violet-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-violet-500 disabled:opacity-50"
+            >
+              {videoStatus === "pending" || videoStatus === "running"
+                ? "Analyzing..."
+                : submission.videoAnalysisResult
+                  ? "Re-run Video Analysis"
+                  : "Start Video Analysis"}
+            </button>
+          </div>
+          <textarea
+            value={videoFeaturesText}
+            onChange={(event) => setVideoFeaturesText(event.target.value)}
+            rows={3}
+            placeholder="Required features (one per line)"
+            className="w-full rounded-md border border-neutral-700 bg-neutral-900 px-2.5 py-1.5 text-xs text-neutral-200"
+          />
+          <p className="text-xs text-neutral-500">
+            Status: {videoStatus}
+            {submission.videoAnalysisJobId ? ` • Job: ${submission.videoAnalysisJobId}` : ""}
+          </p>
+          {videoError ? <p className="text-xs text-red-400">{videoError}</p> : null}
+          {submission.videoAnalysisResult?.status === "completed" &&
+          (submission.videoAnalysisResult.parsed || submission.videoAnalysisResult.raw_output) ? (
+            <div className="space-y-3">
+              {submission.videoAnalysisResult.parsed?.summary ? (
+                <div className="rounded-md border border-neutral-800 bg-neutral-900 px-3 py-2">
+                  <p className="text-xs font-semibold uppercase tracking-wider text-neutral-500">
+                    Video summary
+                  </p>
+                  <p className="mt-1 text-xs text-neutral-300 leading-relaxed">
+                    {submission.videoAnalysisResult.parsed.summary}
+                  </p>
+                </div>
+              ) : null}
+
+              {submission.videoAnalysisResult.parsed?.limitations ? (
+                <div className="rounded-md border border-neutral-800 bg-neutral-900/80 px-3 py-2 text-xs text-neutral-400">
+                  <span className="font-semibold text-neutral-300">Limitations: </span>
+                  {submission.videoAnalysisResult.parsed.limitations}
+                </div>
+              ) : null}
+
+              {submission.videoAnalysisResult.parsed?.rubric &&
+              submission.videoAnalysisResult.parsed.rubric.length > 0 ? (
+                <div>
+                  <p className="mb-1.5 text-xs font-semibold uppercase tracking-wider text-neutral-500">
+                    Rubric
+                  </p>
+                  <div className="max-h-56 overflow-auto rounded-md border border-neutral-800">
+                    <table className="w-full min-w-[520px] border-collapse text-left text-[11px]">
+                      <thead>
+                        <tr className="border-b border-neutral-800 bg-neutral-900/90">
+                          <th className="px-2 py-1.5 font-medium text-neutral-400">ID</th>
+                          <th className="px-2 py-1.5 font-medium text-neutral-400">Score</th>
+                          <th className="px-2 py-1.5 font-medium text-neutral-400">Evidence</th>
+                          <th className="px-2 py-1.5 font-medium text-neutral-400">Time</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {submission.videoAnalysisResult.parsed.rubric.map((row, i) => (
+                          <tr key={row.id ?? i} className="border-b border-neutral-800/80 last:border-0">
+                            <td className="px-2 py-1.5 font-mono text-violet-300">{row.id}</td>
+                            <td className="px-2 py-1.5 text-neutral-200">{row.score}</td>
+                            <td className="max-w-[240px] px-2 py-1.5 text-neutral-400">
+                              {row.evidence}
+                            </td>
+                            <td className="px-2 py-1.5 text-neutral-500">{row.timestamps}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              ) : null}
+
+              {submission.videoAnalysisResult.parsed?.feature_coverage &&
+              submission.videoAnalysisResult.parsed.feature_coverage.length > 0 ? (
+                <div>
+                  <p className="mb-1.5 text-xs font-semibold uppercase tracking-wider text-neutral-500">
+                    Feature coverage
+                  </p>
+                  <ul className="max-h-40 space-y-1.5 overflow-y-auto">
+                    {submission.videoAnalysisResult.parsed.feature_coverage.map((f, i) => (
+                      <li
+                        key={f.feature ?? i}
+                        className="rounded-md border border-neutral-800 bg-neutral-900 px-2.5 py-1.5 text-[11px]"
+                      >
+                        <div className="flex flex-wrap items-baseline gap-2">
+                          <span className="font-medium text-neutral-200">{f.feature}</span>
+                          {f.status ? (
+                            <span className="rounded-full border border-neutral-700 px-1.5 py-0 text-[10px] text-neutral-400">
+                              {f.status}
+                            </span>
+                          ) : null}
+                        </div>
+                        {f.evidence ? (
+                          <p className="mt-0.5 text-[10px] text-neutral-500">{f.evidence}</p>
+                        ) : null}
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              ) : null}
+
+              {submission.videoAnalysisResult.parsed?.gaps_and_risks &&
+              submission.videoAnalysisResult.parsed.gaps_and_risks.length > 0 ? (
+                <div>
+                  <p className="mb-1.5 text-xs font-semibold uppercase tracking-wider text-neutral-500">
+                    Gaps and risks
+                  </p>
+                  <ul className="list-inside list-disc space-y-0.5 text-[11px] text-neutral-400">
+                    {submission.videoAnalysisResult.parsed.gaps_and_risks.map((g, i) => (
+                      <li key={i}>{g}</li>
+                    ))}
+                  </ul>
+                </div>
+              ) : null}
+
+              {!submission.videoAnalysisResult.parsed && submission.videoAnalysisResult.raw_output ? (
+                <div>
+                  <p className="mb-1 text-xs font-semibold uppercase tracking-wider text-neutral-500">
+                    Raw output (unparsed)
+                  </p>
+                  <pre className="max-h-48 overflow-auto rounded-md border border-neutral-800 bg-neutral-950 p-2 text-[10px] whitespace-pre-wrap text-neutral-300">
+                    {submission.videoAnalysisResult.raw_output}
+                  </pre>
+                </div>
+              ) : null}
+
+              {submission.videoAnalysisResult.raw_output ? (
+                <details className="text-[11px] text-neutral-500">
+                  <summary className="cursor-pointer text-neutral-400 hover:text-neutral-200">
+                    Raw model output
+                  </summary>
+                  <pre className="mt-1 max-h-36 overflow-auto rounded-md border border-neutral-800 bg-neutral-950 p-2 text-[10px] whitespace-pre-wrap text-neutral-400">
+                    {submission.videoAnalysisResult.raw_output}
+                  </pre>
+                </details>
+              ) : null}
+            </div>
           ) : null}
         </div>
         <AnimatePresence mode="wait">

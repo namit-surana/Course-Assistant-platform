@@ -58,6 +58,19 @@ class SubmissionResponse(BaseModel):
     queued: bool
 
 
+class SubmissionVideoAnalysisStartRequest(BaseModel):
+    assignment_title: str = Field(default="Course project demo", min_length=1, max_length=255)
+    required_features: list[str] = Field(default_factory=list)
+
+
+class SubmissionVideoAnalysisStartResponse(BaseModel):
+    submission_id: str
+    video_artifact_id: str
+    video_file_name: str | None
+    job_id: str
+    status: Literal["pending", "running", "completed", "failed"]
+
+
 class SubmissionArtifactResponse(BaseModel):
     id: str
     kind: str

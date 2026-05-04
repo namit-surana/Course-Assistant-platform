@@ -56,6 +56,20 @@ class Settings(BaseSettings):
     GEMINI_API_KEY: str | None = Field(default=None, alias="GEMINI_API_KEY")
     elevenlabs_api_key: str | None = Field(default=None, alias="ELEVENLABS_API_KEY")
 
+    video_upload_dir: Path = Field(
+        default=Path("outputs/video_uploads"),
+        alias="VIDEO_UPLOAD_DIR",
+    )
+    video_max_upload_bytes: int = Field(
+        default=200_000_000,
+        alias="VIDEO_MAX_UPLOAD_BYTES",
+        ge=1_000_000,
+    )
+    video_analysis_model: str = Field(
+        default="gemini/gemini-2.5-flash",
+        alias="VIDEO_ANALYSIS_MODEL",
+    )
+
     @property
     def cors_allowed_origins(self) -> list[str]:
         origins = [

@@ -1,0 +1,23 @@
+demo_video_analysis_task:
+  agent: demo_video_analyst
+  tools:
+    - analyze_demo_video
+  description: >
+    Objective:
+    Produce a rubric-based analysis of the student demo video.
+
+    Steps:
+    - Call the analyze_demo_video tool exactly once using this video_path value:
+      {video_path}
+    - Do not change or guess the path. Use it verbatim.
+    - Return only the tool output as your final answer (valid JSON inside the tool response).
+
+    Assignment title:
+    {assignment_title}
+
+    Required features (may be empty):
+    {required_features}
+
+  expected_output: >
+    The same JSON string returned by analyze_demo_video: summary, rubric rows with evidence,
+    feature coverage, and gaps.

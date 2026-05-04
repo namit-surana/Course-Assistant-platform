@@ -12,6 +12,7 @@ from src.api_ui.models.schemas import AnalysisRunState
 from src.api_ui.services.analysis_run_service import AnalysisRunService
 from src.api_ui.services.audit_log_service import AuditLogService
 from src.api_ui.services.run_store import AnalysisRunStore, RunNotFoundError
+from src.aws.bootstrap import bootstrap_local_aws_resources
 from src.config.settings import Settings, get_settings
 from src.events.router import router as events_router
 from src.github_agent.phase1.models.schemas import AnalyzeRequest, AnalyzeResponse
@@ -39,6 +40,7 @@ from src.github_agent.phase3.services.repository_analysis_service import (
 )
 from src.ppt_agent.ppt_analyzer import analyze_ppt
 from src.submissions.router import router as submissions_router
+from src.video_agent.router import router as video_analysis_router
 from src.utils.logging import configure_logging
 from src.voice_agent.services.realtime_bridge import VoiceRealtimeBridge
 from src.voice_agent.services.transcript_store import VoiceTranscriptStore
@@ -55,6 +57,10 @@ RUN_SERVICE = AnalysisRunService(RUN_STORE)
 async def lifespan(_: FastAPI):
     settings = get_settings()
     configure_logging(settings.log_level)
+    try:
+        bootstrap_local_aws_resources(settings)
+    except Exception:
+        logger.exception("Local AWS bootstrap failed")
     yield
 
 
@@ -70,6 +76,7 @@ app.add_middleware(
 )
 app.include_router(submissions_router)
 app.include_router(events_router)
+app.include_router(video_analysis_router)
 
 
 def get_github_service(settings: Settings = Depends(get_settings)) -> GitHubService:
