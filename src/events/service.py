@@ -91,6 +91,11 @@ def get_event(session: Session, event_id: str) -> EvaluationEvent | None:
     return session.get(EvaluationEvent, event_id)
 
 
+def delete_event(session: Session, event: EvaluationEvent) -> None:
+    session.delete(event)
+    session.commit()
+
+
 def build_event_response(session: Session, event: EvaluationEvent) -> EventResponse:
     teams_total = session.scalar(
         select(func.count(Submission.id)).where(Submission.event_id == event.id)
@@ -101,6 +106,7 @@ def build_event_response(session: Session, event: EvaluationEvent) -> EventRespo
             Submission.status == "completed",
         )
     ) or 0
+
     return EventResponse(
         id=event.id,
         name=event.name,
@@ -121,21 +127,32 @@ def build_event_response(session: Session, event: EvaluationEvent) -> EventRespo
 def _rubric_from_event_config(criteria_config: dict[str, Any]) -> list[dict[str, Any]]:
     rubric: list[dict[str, Any]] = []
     criteria = criteria_config.get("criteria", criteria_config)
+
     if not isinstance(criteria, dict):
         return rubric
+
     for criterion_id, state in criteria.items():
         if not isinstance(state, dict) or not state.get("selected", False):
             continue
+
         weight = float(state.get("weight") or 0)
+
         if weight <= 0:
             continue
-        category = CRITERION_LABELS.get(criterion_id, str(criterion_id).replace("_", " ").title())
+
+        category = state.get("label") or CRITERION_LABELS.get(
+            criterion_id,
+            str(criterion_id).replace("_", " ").title(),
+        )
+
+        description = state.get("description") or f"Evaluate {str(category).lower()} for this submission."
+
         rubric.append(
             {
-                "category": category,
-                "description": f"Evaluate {category.lower()} for this submission.",
+                "category": str(category),
+                "description": str(description),
                 "max_score": weight,
             }
         )
-    return rubric
 
+    return rubric

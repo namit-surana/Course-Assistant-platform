@@ -2,7 +2,8 @@ import type { EvalEvent, Submission, WorkerSubmissionDetail } from "./types";
 import { mapWorkerSubmissionToRun } from "./backend-submissions";
 
 const API_BASE_URL =
-  process.env.NEXT_PUBLIC_API_BASE_URL?.replace(/\/$/, "") || "http://127.0.0.1:8000";
+  process.env.NEXT_PUBLIC_API_BASE_URL?.replace(/\/$/, "") ||
+  "http://127.0.0.1:8000";
 
 interface BackendEvent {
   id: string;
@@ -31,10 +32,14 @@ export interface CreateEventInput {
 }
 
 export async function fetchEvents(): Promise<EvalEvent[]> {
-  const response = await fetch(`${API_BASE_URL}/api/events`, { cache: "no-store" });
+  const response = await fetch(`${API_BASE_URL}/api/events`, {
+    cache: "no-store",
+  });
+
   if (!response.ok) {
     throw new Error("Unable to load events.");
   }
+
   const events = (await response.json()) as BackendEvent[];
   return events.map(mapBackendEvent);
 }
@@ -54,21 +59,50 @@ export async function createEvent(input: CreateEventInput): Promise<EvalEvent> {
       criteria_config: input.criteriaConfig,
     }),
   });
+
   if (!response.ok) {
     const failure = await response.json().catch(() => ({}));
-    throw new Error(failure.detail || "Unable to create event.");
+    throw new Error(
+      typeof failure.detail === "string"
+        ? failure.detail
+        : JSON.stringify(failure.detail, null, 2)
+    );
   }
+
   return mapBackendEvent((await response.json()) as BackendEvent);
 }
 
-export async function fetchEventSubmissions(eventId: string): Promise<Submission[]> {
-  const response = await fetch(`${API_BASE_URL}/api/submissions/events/${eventId}/items`, {
-    cache: "no-store",
+export async function deleteEvent(eventId: string): Promise<void> {
+  const response = await fetch(`${API_BASE_URL}/api/events/${eventId}`, {
+    method: "DELETE",
   });
+
+  if (!response.ok) {
+    const failure = await response.json().catch(() => ({}));
+    throw new Error(
+      typeof failure.detail === "string"
+        ? failure.detail
+        : JSON.stringify(failure.detail, null, 2)
+    );
+  }
+}
+
+export async function fetchEventSubmissions(
+  eventId: string
+): Promise<Submission[]> {
+  const response = await fetch(
+    `${API_BASE_URL}/api/submissions/events/${eventId}/items`,
+    {
+      cache: "no-store",
+    }
+  );
+
   if (!response.ok) {
     throw new Error("Unable to load submissions.");
   }
+
   const submissions = (await response.json()) as WorkerSubmissionDetail[];
+
   return submissions.map((submission) => {
     const videoArtifact = submission.artifacts.find((artifact) => artifact.kind === "video");
     const pptArtifact = submission.artifacts.find((artifact) => artifact.kind === "ppt");
@@ -83,6 +117,7 @@ export async function fetchEventSubmissions(eventId: string): Promise<Submission
       phases: [],
       events: [],
     });
+
     return {
       id: submission.id,
       eventId,
@@ -113,5 +148,7 @@ function mapBackendEvent(event: BackendEvent): EvalEvent {
     submissionDeadline: event.submission_deadline || "",
     judgingDeadline: event.judging_deadline || event.submission_deadline || "",
     createdAt: event.created_at.split("T")[0] || event.created_at,
+    artifacts: event.artifacts || [],
+    criteriaConfig: event.criteria_config || {},
   };
 }
