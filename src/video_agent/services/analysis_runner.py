@@ -30,7 +30,7 @@ def build_analysis_prompt(
     return f"""You are analyzing a student demo video for instructors.
 
 Use ONLY what is visible or audible in the video. If something cannot be verified from the recording,
-use score Not_observable and explain briefly. Timestamps may be approximate or unknown.
+use score 0 and explain briefly that it was not observable. Timestamps may be approximate or unknown.
 
 RUBRIC:
 {rubric}
@@ -47,7 +47,7 @@ Return ONLY valid JSON (no markdown code fences, no prose outside JSON). Use exa
   "rubric": [
     {{
       "id": "A1",
-      "score": "Exceeds|Meets|Partial|Missing|Not_observable",
+      "score": <number 0-5>,
       "evidence": "<what you saw or heard>",
       "timestamps": "<approximate or unknown>"
     }}

@@ -6,7 +6,15 @@ from typing import Any, Literal
 from pydantic import BaseModel, Field
 
 
-ArtifactKind = Literal["ppt", "video", "attachment"]
+ArtifactKind = Literal["repo", "ppt", "video", "live_audio", "attachment"]
+RunStatus = Literal["submitted", "queued", "running", "completed", "failed"]
+ArtifactStatus = Literal["submitted", "processing", "completed", "failed"]
+AnalysisJobType = Literal[
+    "submission_analysis",
+    "git_analysis",
+    "ppt_analysis",
+    "video_analysis",
+]
 
 
 class RubricCriterionInput(BaseModel):
@@ -52,34 +60,28 @@ class SubmissionCreateRequest(BaseModel):
 
 class SubmissionResponse(BaseModel):
     id: str
-    status: str
-    analysis_job_id: str
-    sqs_message_id: str | None = None
+    status: RunStatus
     queued: bool
 
 
-class SubmissionVideoAnalysisStartRequest(BaseModel):
-    assignment_title: str = Field(default="Course project demo", min_length=1, max_length=255)
-    required_features: list[str] = Field(default_factory=list)
-
-
-class SubmissionVideoAnalysisStartResponse(BaseModel):
+class SubmissionArtifactAnalysisStartResponse(BaseModel):
     submission_id: str
-    video_artifact_id: str
-    video_file_name: str | None
     job_id: str
-    status: Literal["pending", "running", "completed", "failed"]
+    job_type: AnalysisJobType
+    status: RunStatus
+    queued: bool
+    sqs_message_id: str | None = None
 
 
 class SubmissionArtifactResponse(BaseModel):
     id: str
-    kind: str
+    kind: ArtifactKind
     bucket: str
     object_key: str
     file_name: str | None
     content_type: str | None
     size_bytes: int | None
-    status: str
+    status: ArtifactStatus
 
 
 class FeedbackScoreResponse(BaseModel):
@@ -101,7 +103,7 @@ class SubmissionDetailResponse(BaseModel):
     team_name: str
     repo_url: str | None
     branch: str | None
-    status: str
+    status: RunStatus
     error_message: str | None
     artifacts: list[SubmissionArtifactResponse]
     feedback: FeedbackReportResponse | None

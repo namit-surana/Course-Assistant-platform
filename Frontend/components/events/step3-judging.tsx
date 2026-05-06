@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   GitBranch,
@@ -102,7 +102,7 @@ export function Step3Judging({ data, onChange }: Step3Props) {
 
   const getDefs = (artifactId: string): EditableCriterion[] => {
     return Object.entries(data.criteria)
-      .filter(([_, c]) => c.artifactId === artifactId)
+      .filter(([, c]) => c.artifactId === artifactId)
       .map(([id, c]) => ({
         id,
         label: c.label ?? "",
@@ -113,7 +113,7 @@ export function Step3Judging({ data, onChange }: Step3Props) {
       }));
   };
 
-  const removeArtifactCriteria = (artifactId: string) => {
+  const removeArtifactCriteria = useCallback((artifactId: string) => {
     const updated = { ...data.criteria };
 
     Object.entries(updated).forEach(([id, c]) => {
@@ -123,9 +123,9 @@ export function Step3Judging({ data, onChange }: Step3Props) {
     });
 
     return updated;
-  };
+  }, [data.criteria]);
 
-  const loadSuggestedCriteria = (artifactId: string) => {
+  const loadSuggestedCriteria = useCallback((artifactId: string) => {
     const suggested = CRITERIA_BY_ARTIFACT[artifactId] ?? [];
     const updated = removeArtifactCriteria(artifactId);
 
@@ -141,7 +141,7 @@ export function Step3Judging({ data, onChange }: Step3Props) {
 
     onChange({ criteria: updated });
     setRubricMode((prev) => ({ ...prev, [artifactId]: "suggested" }));
-  };
+  }, [onChange, removeArtifactCriteria, setRubricMode]);
 
   const createFromScratch = (artifactId: string) => {
     const updated = removeArtifactCriteria(artifactId);
@@ -151,6 +151,8 @@ export function Step3Judging({ data, onChange }: Step3Props) {
     setAddingArtifact(artifactId);
     setNewCriterion({ label: "", description: "", weight: "" });
   };
+
+  const artifactsKey = useMemo(() => data.artifacts.join(","), [data.artifacts]);
 
   useEffect(() => {
     artifactTabs.forEach((artifactId) => {
@@ -162,7 +164,7 @@ export function Step3Judging({ data, onChange }: Step3Props) {
         loadSuggestedCriteria(artifactId);
       }
     });
-  }, [data.artifacts.join(",")]);
+  }, [artifactTabs, data.criteria, artifactsKey, loadSuggestedCriteria, rubricMode]);
 
   const getArtifactTotal = (artifactId: string) => {
     return getDefs(artifactId)

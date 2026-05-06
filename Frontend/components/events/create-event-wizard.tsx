@@ -16,6 +16,9 @@ import { EventCreatedShareModal } from "./event-created-share-modal";
 export interface CriterionState {
   selected: boolean;
   weight: number;
+  artifactId?: string;
+  label?: string;
+  description?: string;
 }
 
 export const ARTIFACT_CRITERION_IDS: Record<string, string[]> = {

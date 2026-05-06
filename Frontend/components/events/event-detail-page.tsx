@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { motion, AnimatePresence } from "framer-motion";
+import { motion } from "framer-motion";
 import { useRouter } from "next/navigation";
 import {
   ArrowLeft,
@@ -12,12 +12,13 @@ import {
   Users,
   Inbox,
   Trash2,
+  Share2,
+  Copy,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useEventsStore } from "@/lib/events-store";
 import { SubmissionCard } from "./submission-card";
 import { AddSubmissionModal } from "./add-submission-modal";
-import { SubmissionDetailPanel } from "./submission-detail-panel";
 import type { Submission } from "@/lib/types";
 
 const TYPE_CONFIG = {
@@ -76,8 +77,8 @@ export function EventDetailPage({ eventId }: { eventId: string }) {
   const deleteEvent = useEventsStore((s) => s.deleteEvent);
 
   const [modalOpen, setModalOpen] = useState(false);
-  const [selectedId, setSelectedId] = useState<string | null>(null);
   const [isDeleting, setIsDeleting] = useState(false);
+  const [copied, setCopied] = useState(false);
 
   useEffect(() => {
     void loadEvents();
@@ -107,11 +108,8 @@ export function EventDetailPage({ eventId }: { eventId: string }) {
   ).length;
   const failed = submissions.filter((s) => s.run.status === "failed").length;
 
-  const selectedSub = submissions.find((s) => s.id === selectedId) ?? null;
-  const panelOpen = selectedSub !== null;
-
-  function handleSelectCard(sub: Submission) {
-    setSelectedId((prev) => (prev === sub.id ? null : sub.id));
+  function openSubmission(sub: Submission) {
+    router.push(`/events/${eventId}/submissions/${sub.id}`);
   }
 
   async function handleDeleteEvent() {
@@ -124,11 +122,27 @@ export function EventDetailPage({ eventId }: { eventId: string }) {
     setIsDeleting(true);
 
     try {
-      await deleteEvent(event.id);
+      await deleteEvent(eventId);
       router.push("/home");
     } catch (err) {
       alert(err instanceof Error ? err.message : "Failed to delete event.");
       setIsDeleting(false);
+    }
+  }
+
+  async function handleShare() {
+    const url = event?.studentSubmitUrl;
+    if (!url) {
+      alert("No student submission link is available for this event.");
+      return;
+    }
+    try {
+      await navigator.clipboard.writeText(url);
+      setCopied(true);
+      window.setTimeout(() => setCopied(false), 1200);
+    } catch {
+      // Fallback: open in a new tab so the user can copy manually.
+      window.open(url, "_blank", "noopener,noreferrer");
     }
   }
 
@@ -180,6 +194,16 @@ export function EventDetailPage({ eventId }: { eventId: string }) {
           <span className="hidden sm:inline">
             {isDeleting ? "Deleting..." : "Delete"}
           </span>
+        </button>
+
+        <button
+          onClick={() => void handleShare()}
+          className="flex shrink-0 items-center gap-1.5 rounded-lg border border-neutral-800 px-3 py-1.5 text-xs font-semibold text-neutral-200 hover:bg-neutral-800 transition-colors sm:px-4 sm:text-sm"
+          title={event.studentSubmitUrl ? "Copy student submission link" : "No submit link available"}
+        >
+          {copied ? <Copy className="h-3.5 w-3.5" /> : <Share2 className="h-3.5 w-3.5" />}
+          <span className="hidden sm:inline">{copied ? "Copied" : "Share"}</span>
+          <span className="sm:hidden">{copied ? "Copied" : "Share"}</span>
         </button>
 
         <button
@@ -248,50 +272,13 @@ export function EventDetailPage({ eventId }: { eventId: string }) {
                 <SubmissionCard
                   submission={sub}
                   eventId={eventId}
-                  isSelected={selectedId === sub.id}
-                  onClick={() => handleSelectCard(sub)}
+                  onClick={() => openSubmission(sub)}
                 />
               </motion.div>
             ))}
           </div>
         )}
       </div>
-
-      <AnimatePresence>
-        {panelOpen && (
-          <>
-            <motion.div
-              key="backdrop"
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              exit={{ opacity: 0 }}
-              transition={{ duration: 0.2 }}
-              className="fixed inset-0 z-40 bg-black/40 backdrop-blur-[2px]"
-              onClick={() => setSelectedId(null)}
-            />
-
-            <motion.div
-              key="panel"
-              initial={{ x: "100%" }}
-              animate={{ x: 0 }}
-              exit={{ x: "100%" }}
-              transition={{
-                duration: 0.28,
-                ease: [0.25, 0.46, 0.45, 0.94],
-              }}
-              className="fixed right-0 top-0 bottom-0 z-50 w-full max-w-[620px] border-l border-neutral-800 bg-neutral-950 shadow-2xl"
-            >
-              {selectedSub && (
-                <SubmissionDetailPanel
-                  eventId={eventId}
-                  submission={selectedSub}
-                  onClose={() => setSelectedId(null)}
-                />
-              )}
-            </motion.div>
-          </>
-        )}
-      </AnimatePresence>
 
       <AddSubmissionModal
         eventId={eventId}

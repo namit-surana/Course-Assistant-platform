@@ -1,5 +1,6 @@
 import json
 import re
+from pathlib import Path
 from typing import Any
 
 import fitz  # PyMuPDF
@@ -9,6 +10,40 @@ from pptx import Presentation
 from src.config.settings import get_settings
 
 settings = get_settings()
+
+
+def _default_rubric_path() -> Path:
+    return Path(__file__).resolve().parent / "knowledge" / "default_rubric.md"
+
+
+def load_default_ppt_rubric() -> str:
+    """Course-standard presentation evaluation guidance (markdown), like the video agent rubric."""
+    return _default_rubric_path().read_text(encoding="utf-8")
+
+
+# Fixed scoring dimensions (aligned with knowledge/default_rubric.md). Worker does not use professor rubrics.
+BUILTIN_PPT_RUBRIC_CRITERIA: list[dict[str, Any]] = [
+    {"category": "A1", "max_score": 5.0, "description": "Document is readable: substantive text, not blank or placeholder-only."},
+    {"category": "A2", "max_score": 5.0, "description": "Project and team identifiable early if expected (titles, headers, first slides)."},
+    {"category": "A3", "max_score": 5.0, "description": "Deck/PDF format appropriate; content maps to slides/pages consistently."},
+    {"category": "B1", "max_score": 5.0, "description": "Logical flow: context → approach → results/demo → conclusion or next steps."},
+    {"category": "B2", "max_score": 5.0, "description": "Sections or slide titles support the story; ordering makes sense."},
+    {"category": "B3", "max_score": 5.0, "description": "Enough depth to follow the argument, not only buzzwords."},
+    {"category": "C1", "max_score": 5.0, "description": "Features, architecture, or methodology described concretely."},
+    {"category": "C2", "max_score": 5.0, "description": "Integrations/external systems explained or gaps acknowledged when relevant."},
+    {"category": "C3", "max_score": 5.0, "description": "Limitations, mocks, or unfinished areas disclosed when relevant."},
+    {"category": "D1", "max_score": 5.0, "description": "Terminology consistent; acronyms explained when needed."},
+    {"category": "D2", "max_score": 5.0, "description": "Diagrams/lists referenced in text enough to understand intent without seeing the image."},
+    {"category": "D3", "max_score": 5.0, "description": "Takeaways or conclusions explicit where expected."},
+    {"category": "E1", "max_score": 5.0, "description": "Claims match detail shown; no unsupported overstated “done”."},
+    {"category": "E2", "max_score": 5.0, "description": "Repo/demo/video links only if they appear in the extract."},
+    {"category": "F1", "max_score": 5.0, "description": "Reproducibility or setup notes if applicable to the assignment type."},
+    {"category": "F2", "max_score": 5.0, "description": "Timeline, risks, or teamwork only if present and relevant."},
+]
+
+
+def builtin_ppt_rubric_by_category() -> dict[str, dict[str, Any]]:
+    return {str(row["category"]): row for row in BUILTIN_PPT_RUBRIC_CRITERIA}
 
 
 def extract_ppt_text(file_path: str) -> str:
@@ -123,11 +158,17 @@ def _normalize_scores(
     return result
 
 
-def analyze_ppt(file_path: str, rubric_criteria: list[dict[str, Any]]) -> dict[str, Any]:
+def analyze_ppt(
+    file_path: str,
+    rubric_criteria: list[dict[str, Any]] | None = None,
+) -> dict[str, Any]:
     """
-    Analyze PPT/PDF content against rubric criteria using CrewAI + Gemini.
-    Supports .pptx and .pdf files.
+    Analyze PPT/PDF content using CrewAI + Gemini.
+
+    Pass a non-empty ``rubric_criteria`` only for ad-hoc tools (e.g. /analyze-ppt). The worker omits
+    this so :data:`BUILTIN_PPT_RUBRIC_CRITERIA` is always used.
     """
+    effective_criteria = rubric_criteria if rubric_criteria else BUILTIN_PPT_RUBRIC_CRITERIA
     try:
         document_text = extract_document_text(file_path)
 
@@ -141,9 +182,11 @@ def analyze_ppt(file_path: str, rubric_criteria: list[dict[str, Any]]) -> dict[s
         criteria_text = "\n".join(
             [
                 f"- {item['category']} (max {item['max_score']} pts): {item['description']}"
-                for item in rubric_criteria
+                for item in effective_criteria
             ]
         )
+
+        rubric_guidance = load_default_ppt_rubric()
 
         llm = LLM(
             model="gemini/gemini-2.5-flash-lite",
@@ -165,15 +208,19 @@ def analyze_ppt(file_path: str, rubric_criteria: list[dict[str, Any]]) -> dict[s
         prompt = f"""
 You are evaluating an academic presentation/document.
 
-RUBRIC CRITERIA:
+EVALUATION GUIDANCE (how to read slides and write fair comments; align scores with this where it applies):
+{rubric_guidance}
+
+AUTHORITATIVE SCORING CRITERIA (you must score every row below; use category names exactly):
 {criteria_text}
 
-DOCUMENT CONTENT:
+DOCUMENT CONTENT (extracted text only — you cannot see layout, animations, or images without OCR):
 {document_text}
 
 Instructions:
-- Evaluate each rubric criterion separately.
-- Score each criterion from 0 up to that criterion's max_score.
+- Evaluate each line under AUTHORITATIVE SCORING CRITERIA separately; those names and max scores are binding.
+- Use EVALUATION GUIDANCE to interpret thin extracts and to calibrate comments (do not invent slide content not in the extract).
+- Score each criterion as an integer from 0 up to that criterion's max_score (no 0–1 normalization).
 - Give a short but clear explanation for each criterion.
 - Give an overall 2-3 sentence summary.
 - Return ONLY valid JSON.
@@ -207,7 +254,7 @@ Return exactly this JSON structure:
 
         result = crew.kickoff()
         parsed = _extract_json_from_text(str(result))
-        return _normalize_scores(parsed, rubric_criteria)
+        return _normalize_scores(parsed, effective_criteria)
 
     except Exception as exc:
         return {

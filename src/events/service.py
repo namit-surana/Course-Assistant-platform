@@ -5,6 +5,7 @@ from typing import Any
 from sqlalchemy import Select, func, select
 from sqlalchemy.orm import Session
 
+from src.config.settings import Settings
 from src.db.models import Assignment, EvaluationEvent, RubricCriterion, Submission
 from src.events.schemas import EventCreateRequest, EventResponse
 
@@ -80,11 +81,11 @@ def create_event(session: Session, request: EventCreateRequest) -> EvaluationEve
     return event
 
 
-def list_events(session: Session) -> list[EventResponse]:
+def list_events(session: Session, settings: Settings) -> list[EventResponse]:
     statement: Select[tuple[EvaluationEvent]] = select(EvaluationEvent).order_by(
         EvaluationEvent.created_at.desc()
     )
-    return [build_event_response(session, event) for event in session.scalars(statement)]
+    return [build_event_response(session, event, settings) for event in session.scalars(statement)]
 
 
 def get_event(session: Session, event_id: str) -> EvaluationEvent | None:
@@ -96,7 +97,7 @@ def delete_event(session: Session, event: EvaluationEvent) -> None:
     session.commit()
 
 
-def build_event_response(session: Session, event: EvaluationEvent) -> EventResponse:
+def build_event_response(session: Session, event: EvaluationEvent, settings: Settings) -> EventResponse:
     teams_total = session.scalar(
         select(func.count(Submission.id)).where(Submission.event_id == event.id)
     ) or 0
@@ -107,6 +108,10 @@ def build_event_response(session: Session, event: EvaluationEvent) -> EventRespo
         )
     ) or 0
 
+    frontend_base_url = (settings.frontend_url or "http://localhost:3000").rstrip("/")
+    student_submit_url = f"{frontend_base_url}/events/{event.id}/submit"
+
+    
     return EventResponse(
         id=event.id,
         name=event.name,
@@ -117,6 +122,7 @@ def build_event_response(session: Session, event: EvaluationEvent) -> EventRespo
         judging_deadline=event.judging_deadline,
         artifacts=event.artifacts or [],
         criteria_config=event.criteria_config or {},
+        student_submit_url=student_submit_url,
         teams_total=teams_total,
         teams_evaluated=teams_evaluated,
         created_at=event.created_at,

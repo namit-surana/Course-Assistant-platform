@@ -31,6 +31,7 @@ class EventResponse(BaseModel):
     judging_deadline: date | None
     artifacts: list[str]
     criteria_config: dict[str, Any]
+    student_submit_url: str
     teams_total: int
     teams_evaluated: int
     created_at: datetime

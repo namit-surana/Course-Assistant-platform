@@ -1,6 +1,12 @@
 # Demo video evaluation (observe only what is visible or audible)
 
-Score each row: **Exceeds | Meets | Partial | Missing | Not_observable**
+Score each row: **0–5** (integer).
+
+- **5**: Exceeds expectations
+- **4**: Meets expectations
+- **2**: Partial evidence / needs improvement
+- **1**: Missing / weak evidence
+- **0**: Not observable from the recording (say what’s missing in evidence)
 
 ## A. Submission and format
 - **A1** Length/format acceptable; file plays; resolution viewable.
@@ -32,4 +38,4 @@ Score each row: **Exceeds | Meets | Partial | Missing | Not_observable**
 - **F1** Setup or reproducibility cues if required.
 - **F2** Polish/accessibility only if clearly visible.
 
-When scoring **Not_observable**, explain what was missing from the recording.
+When scoring **0**, explain what was missing from the recording.

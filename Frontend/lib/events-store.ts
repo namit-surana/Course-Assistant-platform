@@ -5,6 +5,8 @@ import type {
   AnalysisRunState,
   VoiceStatus,
   VoiceTranscriptArtifact,
+  VideoAnalysisStatus,
+  WorkerVideoAnalysisJob,
 } from "./types";
 import {
   createEvent,
@@ -13,10 +15,6 @@ import {
   fetchEvents,
   type CreateEventInput,
 } from "./events-api";
-  VideoAnalysisStatus,
-  WorkerVideoAnalysisJob,
-} from "./types";
-import { createEvent, fetchEventSubmissions, fetchEvents, type CreateEventInput } from "./events-api";
 
 interface EventsStore {
   events: EvalEvent[];
@@ -31,11 +29,7 @@ interface EventsStore {
   submissions: Record<string, Submission[]>;
   loadSubmissions: (eventId: string) => Promise<void>;
   addSubmission: (eventId: string, submission: Submission) => void;
-  updateSubmission: (
-    eventId: string,
-    runId: string,
-    run: AnalysisRunState
-  ) => void;
+  updateSubmission: (eventId: string, submissionId: string, run: AnalysisRunState) => void;
 
   updateSubmissionVoiceStatus: (
     eventId: string,
@@ -56,6 +50,16 @@ interface EventsStore {
       videoAnalysisJobId?: string;
       videoAnalysisResult?: WorkerVideoAnalysisJob | null;
     },
+  ) => void;
+
+  updateSubmissionProcessingState: (
+    eventId: string,
+    submissionId: string,
+    patch: {
+      runId?: string;
+      analysisJobId?: string;
+      run?: AnalysisRunState;
+    }
   ) => void;
 }
 
@@ -123,12 +127,12 @@ export const useEventsStore = create<EventsStore>((set) => ({
       },
     })),
 
-  updateSubmission: (eventId, runId, run) =>
+  updateSubmission: (eventId, submissionId, run) =>
     set((state) => ({
       submissions: {
         ...state.submissions,
         [eventId]: (state.submissions[eventId] ?? []).map((s) =>
-          s.runId === runId ? { ...s, run } : s
+          s.id === submissionId ? { ...s, run } : s
         ),
       },
     })),
@@ -154,7 +158,7 @@ export const useEventsStore = create<EventsStore>((set) => ({
         ),
       },
     })),
-}));
+
   updateSubmissionVideoState: (eventId, submissionId, patch) =>
     set((state) => ({
       submissions: {
@@ -169,6 +173,23 @@ export const useEventsStore = create<EventsStore>((set) => ({
                   patch.videoAnalysisResult !== undefined
                     ? patch.videoAnalysisResult
                     : s.videoAnalysisResult,
+              }
+            : s
+        ),
+      },
+    })),
+
+  updateSubmissionProcessingState: (eventId, submissionId, patch) =>
+    set((state) => ({
+      submissions: {
+        ...state.submissions,
+        [eventId]: (state.submissions[eventId] ?? []).map((s) =>
+          s.id === submissionId
+            ? {
+                ...s,
+                runId: patch.runId ?? s.runId,
+                analysisJobId: patch.analysisJobId ?? s.analysisJobId,
+                run: patch.run ?? s.run,
               }
             : s
         ),

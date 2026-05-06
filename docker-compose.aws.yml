@@ -5,7 +5,6 @@ services:
       POSTGRES_DB: coursework
       POSTGRES_USER: coursework
       POSTGRES_PASSWORD: coursework
-    # Host 5433 avoids clashing with another PostgreSQL on Windows using 5432
     ports:
       - "5433:5432"
     volumes:
@@ -17,19 +16,6 @@ services:
       retries: 20
       start_period: 10s
 
-  localstack:
-    image: localstack/localstack:3
-    environment:
-      SERVICES: s3,sqs,secretsmanager,logs,ses
-      AWS_DEFAULT_REGION: us-east-1
-      S3_BUCKET_NAME: ${S3_BUCKET_NAME:-prod-bucket-uploads}
-      SQS_QUEUE_NAME: ${SQS_QUEUE_NAME:-prod-queue-analysis}
-    ports:
-      - "4566:4566"
-    volumes:
-      - localstack-data:/var/lib/localstack
-      - ./localstack/init-aws.sh:/etc/localstack/init/ready.d/init-aws.sh:ro
-
   api:
     build: .
     command: uvicorn src.app:app --host 0.0.0.0 --port 8000
@@ -40,18 +26,17 @@ services:
         required: false
     environment:
       DATABASE_URL: ${DATABASE_URL:-postgresql+psycopg://coursework:coursework@db:5432/coursework}
-      AWS_ENDPOINT_URL: ${AWS_ENDPOINT_URL:-http://localstack:4566}
-      AWS_PUBLIC_ENDPOINT_URL: ${AWS_PUBLIC_ENDPOINT_URL:-http://localhost:4566}
       AWS_REGION: ${AWS_REGION:-us-east-1}
-      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-test}
-      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-test}
+      # For Docker, prefer real AWS credentials via env vars (not AWS_PROFILE).
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID}
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY}
+      S3_BUCKET_NAME: ${S3_BUCKET_NAME}
+      SQS_QUEUE_URL: ${SQS_QUEUE_URL}
     volumes:
       - ./outputs:/app/outputs
     depends_on:
       db:
         condition: service_healthy
-      localstack:
-        condition: service_started
 
   worker:
     build:
@@ -62,19 +47,20 @@ services:
         required: false
     environment:
       DATABASE_URL: ${DATABASE_URL:-postgresql+psycopg://coursework:coursework@db:5432/coursework}
-      AWS_ENDPOINT_URL: ${AWS_ENDPOINT_URL:-http://localstack:4566}
-      AWS_PUBLIC_ENDPOINT_URL: ${AWS_PUBLIC_ENDPOINT_URL:-http://localhost:4566}
       AWS_REGION: ${AWS_REGION:-us-east-1}
-      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-test}
-      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-test}
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID}
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY}
+      AWS_SESSION_TOKEN: ${AWS_SESSION_TOKEN}
+      S3_BUCKET_NAME: ${S3_BUCKET_NAME}
+      SQS_QUEUE_URL: ${SQS_QUEUE_URL}
+      WORKER_ENABLE_PPT_ANALYSIS: ${WORKER_ENABLE_PPT_ANALYSIS:-true}
+      WORKER_ENABLE_REPOSITORY_ANALYSIS: ${WORKER_ENABLE_REPOSITORY_ANALYSIS:-true}
     volumes:
       - ./outputs:/app/outputs
     depends_on:
       db:
         condition: service_healthy
-      localstack:
-        condition: service_started
 
 volumes:
   postgres-data:
-  localstack-data:
+

@@ -12,6 +12,8 @@ import type {
 const API_BASE_URL =
   process.env.NEXT_PUBLIC_API_BASE_URL?.replace(/\/$/, "") || "http://127.0.0.1:8000";
 
+const mapJobStatus = (status: "queued" | "running" | "completed" | "failed") => status;
+
 export async function submitWorkerProject({
   teamName,
   repoUrl,
@@ -31,9 +33,8 @@ export async function submitWorkerProject({
 }) {
   const artifacts: WorkerArtifactInput[] = [];
 
-  // 🔥 FIX: use "presentation" instead of "ppt"
   if (pptFile) {
-    const uploaded = await uploadArtifact(pptFile, "presentation");
+    const uploaded = await uploadArtifact(pptFile, "ppt");
     artifacts.push(uploaded);
   }
   if (videoFile) {
@@ -41,7 +42,7 @@ export async function submitWorkerProject({
     artifacts.push(uploaded);
   }
 
-  const response = await fetch(`${API_BASE_URL}/api/submissions`, {
+  const response = await fetch(`${API_BASE_URL}/api/v1/submissions`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
@@ -69,21 +70,44 @@ export async function submitWorkerProject({
   return {
     submission,
     run: buildWorkerRun({
-      id: submission.analysis_job_id,
+      id: submission.id,
       repoUrl,
       branch,
       status: submission.status,
       activity: submission.queued
         ? "Queued for worker analysis"
-        : "Saved locally; SQS_QUEUE_URL is not configured.",
+        : "Submission saved. Waiting for organizer to start processing.",
     }),
   };
+}
+
+export async function startWorkerSubmissionProcessing({
+  submissionId,
+}: {
+  submissionId: string;
+}): Promise<WorkerVideoAnalysisStartResponse> {
+  const response = await fetch(`${API_BASE_URL}/api/v1/submissions/${submissionId}/processing/start`, {
+    method: "POST",
+  });
+  if (!response.ok) {
+    const failure = await response.json().catch(() => ({}));
+    throw new Error(failure.detail || "Unable to start processing.");
+  }
+  const started = (await response.json()) as {
+    submission_id: string;
+    job_id: string;
+    job_type: "submission_analysis" | "git_analysis" | "ppt_analysis" | "video_analysis";
+    status: "queued" | "running" | "completed" | "failed";
+    queued: boolean;
+    sqs_message_id?: string | null;
+  };
+  return { ...started, status: mapJobStatus(started.status) };
 }
 
 export async function fetchWorkerSubmission(
   submissionId: string
 ): Promise<WorkerSubmissionDetail> {
-  const response = await fetch(`${API_BASE_URL}/api/submissions/${submissionId}`);
+  const response = await fetch(`${API_BASE_URL}/api/v1/submissions/${submissionId}`);
 
   if (!response.ok) {
     const failure = await response.json().catch(() => ({}));
@@ -99,37 +123,60 @@ export async function fetchWorkerSubmission(
 
 export async function startWorkerSubmissionVideoAnalysis({
   submissionId,
-  assignmentTitle,
-  requiredFeatures,
 }: {
   submissionId: string;
-  assignmentTitle?: string;
-  requiredFeatures?: string[];
 }): Promise<WorkerVideoAnalysisStartResponse> {
-  const response = await fetch(`${API_BASE_URL}/api/submissions/${submissionId}/video-analysis/start`, {
+  const response = await fetch(`${API_BASE_URL}/api/v1/submissions/${submissionId}/video-analysis/start`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      assignment_title: assignmentTitle || "Course project demo",
-      required_features: requiredFeatures || [],
-    }),
   });
   if (!response.ok) {
     const failure = await response.json().catch(() => ({}));
     throw new Error(failure.detail || "Unable to start video analysis.");
   }
-  return (await response.json()) as WorkerVideoAnalysisStartResponse;
+  const started = (await response.json()) as {
+    submission_id: string;
+    job_id: string;
+    job_type: "submission_analysis" | "git_analysis" | "ppt_analysis" | "video_analysis";
+    status: "queued" | "running" | "completed" | "failed";
+    queued: boolean;
+    sqs_message_id?: string | null;
+  };
+  return {
+    ...started,
+    status: mapJobStatus(started.status),
+  };
 }
 
 export async function fetchWorkerVideoAnalysisJob(jobId: string): Promise<WorkerVideoAnalysisJob> {
-  const response = await fetch(`${API_BASE_URL}/api/video-analysis/jobs/${jobId}`, {
+  const response = await fetch(`${API_BASE_URL}/api/v1/jobs/${jobId}`, {
     cache: "no-store",
   });
   if (!response.ok) {
     const failure = await response.json().catch(() => ({}));
     throw new Error(failure.detail || "Unable to load video analysis job.");
   }
-  return (await response.json()) as WorkerVideoAnalysisJob;
+  const job = (await response.json()) as {
+    job_id: string;
+    submission_id: string;
+    job_type: "submission_analysis" | "git_analysis" | "ppt_analysis" | "video_analysis";
+    status: "queued" | "running" | "completed" | "failed";
+    attempts: number;
+    error?: string | null;
+    created_at: string;
+    updated_at: string;
+  };
+  return {
+    job_id: job.job_id,
+    submission_id: job.submission_id,
+    job_type: job.job_type,
+    status: mapJobStatus(job.status),
+    attempts: job.attempts,
+    error: job.error ?? null,
+    created_at: job.created_at,
+    updated_at: job.updated_at,
+    raw_output: null,
+    parsed: null,
+  };
 }
 
 export function mapWorkerSubmissionToRun(
@@ -169,7 +216,7 @@ async function uploadArtifact(
 ): Promise<WorkerArtifactInput> {
   const contentType = file.type || contentTypeForFileName(file.name);
 
-  const presignResponse = await fetch(`${API_BASE_URL}/api/submissions/presigned-url`, {
+  const presignResponse = await fetch(`${API_BASE_URL}/api/v1/submissions/presigned-url`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
@@ -256,8 +303,9 @@ function buildWorkerRun({
 }
 
 function activityForStatus(status: AnalysisRunState["status"]) {
+  if (status === "submitted") return "Submission saved; waiting for organizer to start processing";
   if (status === "queued") return "Queued for worker analysis";
-  if (status === "running") return "Worker is analyzing submitted artifacts";
+  if (status === "running") return "Processing…";
   if (status === "completed") return "Analysis completed";
   return "Analysis failed";
 }

@@ -12,7 +12,7 @@ from src.video_agent.models.schemas import DemoVideoJobCreateResponse, DemoVideo
 from src.video_agent.services.job_runner import start_video_analysis_job
 from src.video_agent.services.video_job_store import JOB_STORE
 
-router = APIRouter(prefix="/api/video-analysis", tags=["video-analysis"])
+router = APIRouter(prefix="/video-analysis", tags=["video-analysis"])
 
 _ALLOWED_VIDEO_EXT = {".mp4", ".webm", ".mov", ".mkv"}
 

@@ -1,24 +1,29 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import Link from "next/link";
 import { motion } from "framer-motion";
 import { ArrowLeft, GitBranch, Loader2, CheckCircle2 } from "lucide-react";
 import { submitWorkerProject } from "@/lib/backend-submissions";
 import { useEventsStore } from "@/lib/events-store";
+import { presentationRubricFromCriteriaConfig } from "@/lib/presentation-rubric";
 import type { Submission } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
 export function TeamSubmitPage({ eventId }: { eventId: string }) {
   const event = useEventsStore((s) => s.events.find((e) => e.id === eventId));
   const addSubmission = useEventsStore((s) => s.addSubmission);
+  const loadEvents = useEventsStore((s) => s.loadEvents);
+
+  useEffect(() => {
+    void loadEvents();
+  }, [loadEvents]);
 
   const [teamName, setTeamName] = useState("");
   const [repoUrl, setRepoUrl] = useState("");
   const [branch, setBranch] = useState("");
   const [pptFile, setPptFile] = useState<File | null>(null);
   const [videoFile, setVideoFile] = useState<File | null>(null);
-  const [rubricText, setRubricText] = useState(DEFAULT_RUBRIC_TEXT);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [done, setDone] = useState(false);
@@ -32,18 +37,9 @@ export function TeamSubmitPage({ eventId }: { eventId: string }) {
     setIsSubmitting(true);
 
     try {
-      const presentationRubric = Object.values(
-        event?.criteriaConfig?.criteria || {}
-      )
-        .filter(
-          (c: any) =>
-            c.artifactId === "presentation" && c.selected
-        )
-        .map((c: any) => ({
-          category: c.label,
-          description: c.description,
-          max_score: c.weight,
-        }));
+      const presentationRubric = presentationRubricFromCriteriaConfig(
+        event?.criteriaConfig as Record<string, unknown> | undefined
+      );
 
       if (pptFile && presentationRubric.length === 0) {
         throw new Error(
@@ -56,9 +52,8 @@ export function TeamSubmitPage({ eventId }: { eventId: string }) {
         repoUrl: repoUrl.trim(),
         branch: branch.trim() || undefined,
         pptFile,
-        rubricCriteria: presentationRubric,
         videoFile,
-        rubricCriteria,
+        rubricCriteria: presentationRubric,
         eventId,
       });
 
@@ -68,10 +63,8 @@ export function TeamSubmitPage({ eventId }: { eventId: string }) {
         teamName: teamName.trim(),
         repoUrl: repoUrl.trim(),
         branch: branch.trim() || undefined,
-        runId: workerSubmission.analysis_job_id,
         run,
         workerSubmissionId: workerSubmission.id,
-        analysisJobId: workerSubmission.analysis_job_id,
         pptFileName: pptFile?.name,
         videoFileName: videoFile?.name,
         videoAnalysisStatus: "idle",
@@ -105,8 +98,7 @@ export function TeamSubmitPage({ eventId }: { eventId: string }) {
           </h1>
 
           <p className="text-sm text-neutral-400 leading-relaxed">
-            Your repository analysis has started. If you uploaded a presentation,
-            it will be evaluated using the organizer&apos;s rubric.
+            Your submission was saved. Your organizer will start processing from the dashboard.
           </p>
 
           <Link
@@ -249,6 +241,8 @@ export function TeamSubmitPage({ eventId }: { eventId: string }) {
                 PPT/PDF analysis will use the professor-defined presentation
                 rubric automatically.
               </p>
+            </div>
+
             <div className="space-y-1.5">
               <label className="text-sm font-semibold text-neutral-300">
                 Demo video <span className="text-neutral-500 font-normal">(optional)</span>
@@ -260,22 +254,6 @@ export function TeamSubmitPage({ eventId }: { eventId: string }) {
                 className={cn(
                   "w-full rounded-lg border border-neutral-700 bg-neutral-900 px-3.5 py-2 text-sm text-neutral-300",
                   "file:mr-3 file:rounded-md file:border-0 file:bg-neutral-800 file:px-2.5 file:py-1 file:text-xs file:text-neutral-200",
-                  "focus:outline-none focus:border-violet-500",
-                )}
-                disabled={isSubmitting}
-              />
-            </div>
-
-            <div className="space-y-1.5">
-              <label className="text-sm font-semibold text-neutral-300">
-                Rubric JSON
-              </label>
-              <textarea
-                value={rubricText}
-                onChange={(event) => setRubricText(event.target.value)}
-                rows={7}
-                className={cn(
-                  "w-full rounded-lg border border-neutral-700 bg-neutral-900 px-3.5 py-2 font-mono text-xs text-neutral-200 placeholder:text-neutral-600",
                   "focus:outline-none focus:border-violet-500",
                 )}
                 disabled={isSubmitting}

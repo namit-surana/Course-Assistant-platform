@@ -5,8 +5,8 @@ import { motion, AnimatePresence } from "framer-motion";
 import { X, Loader2 } from "lucide-react";
 import { submitWorkerProject } from "@/lib/backend-submissions";
 import { useEventsStore } from "@/lib/events-store";
+import { presentationRubricFromCriteriaConfig } from "@/lib/presentation-rubric";
 import type { Submission } from "@/lib/types";
-import { cn } from "@/lib/utils";
 
 interface Props {
   eventId: string;
@@ -50,21 +50,9 @@ export function AddSubmissionModal({ eventId, open, onClose }: Props) {
     setIsSubmitting(true);
 
     try {
-      // 🔥 Dynamic rubric (ONLY valid weights)
-      const presentationRubric = Object.values(
-        event?.criteriaConfig?.criteria || {}
-      )
-        .filter(
-          (c: any) =>
-            c.artifactId === "presentation" &&
-            c.selected &&
-            Number(c.weight) > 0
-        )
-        .map((c: any) => ({
-          category: c.label,
-          description: c.description,
-          max_score: Number(c.weight),
-        }));
+      const presentationRubric = presentationRubricFromCriteriaConfig(
+        event?.criteriaConfig as Record<string, unknown> | undefined
+      );
 
       if (pptFile && presentationRubric.length === 0) {
         throw new Error(
@@ -88,10 +76,8 @@ export function AddSubmissionModal({ eventId, open, onClose }: Props) {
         teamName: teamName.trim(),
         repoUrl: repoUrl.trim(),
         branch: branch.trim() || undefined,
-        runId: workerSubmission.analysis_job_id,
         run,
         workerSubmissionId: workerSubmission.id,
-        analysisJobId: workerSubmission.analysis_job_id,
         pptFileName: pptFile?.name,
         createdAt: new Date().toISOString(),
       };

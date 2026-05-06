@@ -15,6 +15,7 @@ interface BackendEvent {
   judging_deadline?: string | null;
   artifacts: string[];
   criteria_config: Record<string, unknown>;
+  student_submit_url: string;
   teams_total: number;
   teams_evaluated: number;
   created_at: string;
@@ -32,7 +33,7 @@ export interface CreateEventInput {
 }
 
 export async function fetchEvents(): Promise<EvalEvent[]> {
-  const response = await fetch(`${API_BASE_URL}/api/events`, {
+  const response = await fetch(`${API_BASE_URL}/api/v1/events`, {
     cache: "no-store",
   });
 
@@ -45,7 +46,7 @@ export async function fetchEvents(): Promise<EvalEvent[]> {
 }
 
 export async function createEvent(input: CreateEventInput): Promise<EvalEvent> {
-  const response = await fetch(`${API_BASE_URL}/api/events`, {
+  const response = await fetch(`${API_BASE_URL}/api/v1/events`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
@@ -73,7 +74,7 @@ export async function createEvent(input: CreateEventInput): Promise<EvalEvent> {
 }
 
 export async function deleteEvent(eventId: string): Promise<void> {
-  const response = await fetch(`${API_BASE_URL}/api/events/${eventId}`, {
+  const response = await fetch(`${API_BASE_URL}/api/v1/events/${eventId}`, {
     method: "DELETE",
   });
 
@@ -91,7 +92,7 @@ export async function fetchEventSubmissions(
   eventId: string
 ): Promise<Submission[]> {
   const response = await fetch(
-    `${API_BASE_URL}/api/submissions/events/${eventId}/items`,
+    `${API_BASE_URL}/api/v1/events/${eventId}/submissions`,
     {
       cache: "no-store",
     }
@@ -118,6 +119,23 @@ export async function fetchEventSubmissions(
       events: [],
     });
 
+    const rawVideo = submission.feedback?.raw_result?.video;
+    const videoFromSubmission =
+      rawVideo && (rawVideo.parsed || rawVideo.raw_output || rawVideo.error)
+        ? {
+            job_id: submission.id,
+            submission_id: submission.id,
+            job_type: "video_analysis" as const,
+            status: rawVideo.error ? ("failed" as const) : ("completed" as const),
+            attempts: submission.status === "failed" ? 1 : 0,
+            created_at: submission.created_at,
+            updated_at: submission.updated_at,
+            raw_output: rawVideo.raw_output ?? null,
+            parsed: rawVideo.parsed ?? null,
+            error: rawVideo.error ?? null,
+          }
+        : null;
+
     return {
       id: submission.id,
       eventId,
@@ -130,8 +148,10 @@ export async function fetchEventSubmissions(
       pptFileName: pptArtifact?.file_name || undefined,
       videoFileName: videoArtifact?.file_name || undefined,
       videoObjectKey: videoArtifact?.object_key || undefined,
-      videoAnalysisStatus: "idle",
-      videoAnalysisResult: null,
+      videoAnalysisStatus: videoFromSubmission
+        ? videoFromSubmission.status
+        : ("idle" as const),
+      videoAnalysisResult: videoFromSubmission,
       createdAt: submission.created_at,
     };
   });
@@ -143,6 +163,7 @@ function mapBackendEvent(event: BackendEvent): EvalEvent {
     name: event.name,
     type: event.type,
     status: event.status,
+    studentSubmitUrl: event.student_submit_url,
     teamsTotal: event.teams_total,
     teamsEvaluated: event.teams_evaluated,
     submissionDeadline: event.submission_deadline || "",
