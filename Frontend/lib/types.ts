@@ -211,7 +211,11 @@ export interface WorkerSubmissionResponse {
 export interface WorkerFeedbackReport {
   summary?: string | null;
   raw_result?: {
-    repository?: AnalyzeResponse;
+    repository?: AnalyzeResponse & {
+      error?: string;
+      skipped?: boolean;
+      reason?: string;
+    };
     ppt?: {
       ppt_summary?: string;
       criteria_scores?: Array<{

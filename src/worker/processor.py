@@ -59,6 +59,7 @@ def process_analysis_job_with_session(
 
     try:
         raw_result = _run_job_by_type(job, submission, settings)
+        _raise_if_no_successful_analysis(raw_result)
         _save_feedback(session, submission, raw_result)
         job.status = "completed"
         job.completed_at = datetime.now(timezone.utc)
@@ -252,6 +253,44 @@ def _build_summary(raw_result: dict[str, Any]) -> str:
     return "Analysis completed. See raw_result for details."
 
 
+def _raise_if_no_successful_analysis(raw_result: dict[str, Any]) -> None:
+    components = {
+        name: value
+        for name in ("repository", "ppt", "video")
+        if isinstance((value := raw_result.get(name)), dict)
+    }
+    if not components:
+        return
+
+    errors = [
+        f"{name}: {component['error']}"
+        for name, component in components.items()
+        if component.get("error")
+    ]
+    if not errors:
+        return
+
+    if any(_component_succeeded(component) for component in components.values()):
+        return
+
+    raise RuntimeError("; ".join(errors))
+
+
+def _component_succeeded(component: dict[str, Any]) -> bool:
+    if component.get("error") or component.get("skipped"):
+        return False
+    return any(
+        component.get(key)
+        for key in (
+            "repository_analysis",
+            "ppt_summary",
+            "criteria_scores",
+            "parsed",
+            "raw_output",
+        )
+    )
+
+
 def _first_artifact(
     artifacts: list[SubmissionArtifact],
     kinds: set[str],
@@ -267,4 +306,3 @@ def _first_artifact(
             if lower_path.endswith((".pptx", ".pdf")):
                 return artifact
     return None
-

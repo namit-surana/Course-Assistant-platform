@@ -4,7 +4,7 @@ from sqlalchemy.orm import sessionmaker
 from src.config.settings import Settings
 from src.db.base import Base
 from src.submissions.schemas import ArtifactInput, RubricCriterionInput, SubmissionCreateRequest
-from src.submissions.service import create_submission
+from src.submissions.service import create_submission, create_submission_analysis_job
 
 
 class FakeQueuePublisher:
@@ -47,14 +47,21 @@ def test_create_submission_persists_artifact_and_enqueues_job() -> None:
                 ],
             ),
             settings=settings,
+        )
+        queued = create_submission_analysis_job(
+            session,
+            created.submission,
+            job_type="submission_analysis",
             queue_publisher=queue,
         )
 
-        assert created.queued is True
-        assert created.analysis_job.sqs_message_id == "message-123"
+        assert created.queued is False
+        assert queued.queued is True
+        assert queued.analysis_job.sqs_message_id == "message-123"
         assert queue.payloads == [
             {
-                "job_id": created.analysis_job.id,
+                "job_id": queued.analysis_job.id,
+                "job_type": "submission_analysis",
                 "submission_id": created.submission.id,
                 "event_id": None,
                 "team_name": "Team Alpha",
