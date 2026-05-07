@@ -9,7 +9,6 @@ from src.config.settings import get_settings
 from src.video_agent.models.schemas import DemoVideoJobCreateResponse
 from src.video_agent.services.analysis_runner import run_demo_video_analysis
 from src.video_agent.services.video_job_store import JOB_STORE
-from src.video_agent.utils import extract_json_object
 
 logger = logging.getLogger(__name__)
 
@@ -23,17 +22,12 @@ def _run_job(
     settings = get_settings()
     try:
         JOB_STORE.update(job_id, status="running")
-        raw = run_demo_video_analysis(
+        raw, parsed = run_demo_video_analysis(
             video_path,
             assignment_title=assignment_title,
             required_features=required_features,
             settings=settings,
         )
-        parsed: dict | None
-        try:
-            parsed = extract_json_object(raw)
-        except (json.JSONDecodeError, ValueError):
-            parsed = None
         JOB_STORE.update(job_id, status="completed", raw_output=raw, parsed=parsed)
     except Exception as exc:
         logger.exception("Video analysis job %s failed", job_id)

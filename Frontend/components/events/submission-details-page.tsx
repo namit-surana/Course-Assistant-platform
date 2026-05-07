@@ -41,8 +41,15 @@ function normalizePptScore(score: number): string {
   return Number.isInteger(rounded) ? String(rounded) : rounded.toFixed(1);
 }
 
-function normalizeDemoScore(score: string | undefined): string {
-  if (!score) return "";
+function normalizeDemoScore(score: string | number | null | undefined): string {
+  if (score === null || score === undefined) return "";
+  if (typeof score === "number") {
+    if (!Number.isFinite(score)) return "";
+    const clamped = Math.max(0, Math.min(5, score));
+    const rounded = Math.round(clamped * 10) / 10;
+    return Number.isInteger(rounded) ? String(rounded) : rounded.toFixed(1);
+  }
+
   const raw = score.trim();
   const asNum = Number(raw);
 

@@ -10,7 +10,7 @@ demo_video_analysis_task:
     - Call the analyze_demo_video tool exactly once using this video_path value:
       {video_path}
     - Do not change or guess the path. Use it verbatim.
-    - Return only the tool output as your final answer (valid JSON inside the tool response).
+    - Return only the tool output as your final answer (a JSON object).
 
     Assignment title:
     {assignment_title}
@@ -19,5 +19,5 @@ demo_video_analysis_task:
     {required_features}
 
   expected_output: >
-    The same JSON string returned by analyze_demo_video: summary, rubric rows with evidence,
+    The JSON object returned by analyze_demo_video: summary, rubric rows with evidence,
     feature coverage, and gaps.

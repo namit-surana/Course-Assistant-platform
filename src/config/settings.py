@@ -60,6 +60,7 @@ class Settings(BaseSettings):
         default=True,
         alias="WORKER_ENABLE_REPOSITORY_ANALYSIS",
     )
+    worker_enable_video_analysis: bool = Field(default=True, alias="WORKER_ENABLE_VIDEO_ANALYSIS")
 
     GEMINI_API_KEY: str | None = Field(default=None, alias="GEMINI_API_KEY")
     elevenlabs_api_key: str | None = Field(default=None, alias="ELEVENLABS_API_KEY")

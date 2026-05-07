@@ -5,6 +5,7 @@ from pathlib import Path
 
 from src.config.settings import Settings
 from src.video_agent.crew.demo_video_crew import DemoVideoAnalysisCrew
+from src.video_agent.models.schemas import DemoVideoAnalysisOutput
 
 
 logger = logging.getLogger(__name__)
@@ -73,7 +74,7 @@ def run_demo_video_analysis(
     assignment_title: str,
     required_features: list[str] | None,
     settings: Settings,
-) -> str:
+) -> tuple[str, dict]:
     if not settings.GEMINI_API_KEY:
         raise RuntimeError("GEMINI_API_KEY is not configured.")
 
@@ -87,16 +88,28 @@ def run_demo_video_analysis(
         analysis_prompt=prompt,
     )
     crew = crew_driver.crew()
-    result = crew.kickoff(
+    task_instance = crew_driver.demo_video_analysis_task()
+    crew.kickoff(
         inputs={
             "video_path": str(video_path.resolve()),
             "assignment_title": assignment_title,
             "required_features": features_lines_for_task(required_features),
         }
     )
-    output = str(result).strip()
+    output_model: DemoVideoAnalysisOutput
+    if getattr(task_instance.output, "pydantic", None) is not None:
+        output_model = task_instance.output.pydantic
+    elif getattr(task_instance.output, "json_dict", None) is not None:
+        output_model = DemoVideoAnalysisOutput.model_validate(task_instance.output.json_dict)
+    elif getattr(task_instance.output, "raw", None):
+        output_model = DemoVideoAnalysisOutput.model_validate_json(task_instance.output.raw)
+    else:
+        raise RuntimeError("Demo video analysis did not produce structured output.")
+
+    raw_output = output_model.model_dump_json()
+    parsed = output_model.model_dump(mode="json")
     logger.info("Demo video crew finished for %s", video_path)
-    return output
+    return raw_output, parsed
 
 
 def features_lines_for_task(required_features: list[str] | None) -> str:

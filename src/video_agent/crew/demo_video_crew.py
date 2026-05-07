@@ -5,6 +5,8 @@ from typing import Any
 from pydantic import BaseModel, Field
 
 from src.video_agent.services.gemini_video import analyze_video_file
+from src.video_agent.models.schemas import DemoVideoAnalysisOutput
+from src.video_agent.utils import extract_json_object
 
 
 try:
@@ -42,6 +44,7 @@ class DemoVideoAnalysisCrew:
         return Task(
             name="demo_video_analysis",
             config=self.tasks_config["demo_video_analysis_task"],
+            output_pydantic=DemoVideoAnalysisOutput,
         )
 
     @tool
@@ -59,22 +62,23 @@ class DemoVideoAnalysisCrew:
         class AnalyzeDemoVideoTool(BaseTool):
             name: str = "analyze_demo_video"
             description: str = (
-                "Uploads the demo video to Gemini, applies the rubric prompt, and returns JSON text. "
+                "Uploads the demo video to Gemini, applies the rubric prompt, and returns a JSON object. "
                 "Call exactly once with the path from the task."
             )
             args_schema: type[BaseModel] = VideoPathSchema
 
-            def _run(self, video_path: str) -> str:
+            def _run(self, video_path: str) -> dict[str, Any]:
                 from src.config.settings import get_settings
 
                 settings = get_settings()
                 api_key = outer.gemini_api_key or settings.GEMINI_API_KEY
-                return analyze_video_file(
+                raw = analyze_video_file(
                     video_path=video_path,
                     prompt=outer.analysis_prompt,
                     model=settings.video_analysis_model,
                     api_key=api_key,
                 )
+                return extract_json_object(raw)
 
         return AnalyzeDemoVideoTool()
 
