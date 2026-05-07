@@ -1,0 +1,21 @@
+ppt_analysis_task:
+  agent: ppt_rubric_analyst
+  tools:
+    - extract_document_text
+  description: >
+    You are evaluating a student presentation or PDF based ONLY on extracted text.
+
+    Steps:
+    - Call extract_document_text exactly once with this file_path:
+      {file_path}
+    - Use the returned extracted_text + the rubric guidance + the authoritative scoring criteria below.
+    - Score every criterion row. If evidence is missing in extracted text, score 0 and explain briefly.
+    - Return ONLY a JSON object with the required keys. Do not include markdown.
+
+    RUBRIC GUIDANCE:
+    {rubric_guidance}
+
+    AUTHORITATIVE SCORING CRITERIA (score all of them; category names are binding):
+    {criteria_text}
+  expected_output: >
+    JSON with keys: criteria_scores (list of {category, score, comment}) and ppt_summary (2-3 sentences).

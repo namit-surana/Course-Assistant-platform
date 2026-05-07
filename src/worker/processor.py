@@ -23,7 +23,6 @@ from src.github_agent.phase2.services.tree_analysis_service import create_tree_a
 from src.github_agent.phase3.services.repository_analysis_service import create_repository_analysis_service
 from src.ppt_agent.ppt_analyzer import analyze_ppt, builtin_ppt_rubric_by_category
 from src.video_agent.services.analysis_runner import run_demo_video_analysis
-from src.video_agent.utils import extract_json_object
 
 
 def process_analysis_job(job_id: str, settings: Settings | None = None) -> None:
@@ -85,20 +84,32 @@ def _run_submission_analysis(submission: Submission, settings: Settings) -> dict
     async def _run_all() -> dict[str, Any]:
         result: dict[str, Any] = {"submission_id": submission.id, "team_name": submission.team_name}
 
-        tasks: dict[str, asyncio.Future[Any]] = {}
+        tasks: dict[str, asyncio.Task[Any]] = {}
 
         if settings.worker_enable_ppt_analysis:
-            tasks["ppt"] = asyncio.ensure_future(asyncio.to_thread(_run_ppt_analysis, submission, settings))
+            tasks["ppt"] = asyncio.create_task(
+                asyncio.to_thread(_run_ppt_analysis, submission, settings),
+                name="submission:ppt",
+            )
         else:
             result["ppt"] = {"skipped": True, "reason": "WORKER_ENABLE_PPT_ANALYSIS=false"}
 
         if submission.repo_url and settings.worker_enable_repository_analysis:
-            tasks["repository"] = asyncio.ensure_future(_run_repository_analysis(submission, settings))
+            tasks["repository"] = asyncio.create_task(
+                _run_repository_analysis(submission, settings),
+                name="submission:repository",
+            )
         elif submission.repo_url:
             result["repository"] = {"skipped": True, "reason": "WORKER_ENABLE_REPOSITORY_ANALYSIS=false"}
 
-        # Demo video analysis is included in submission_analysis when a video artifact exists.
-        tasks["video"] = asyncio.ensure_future(asyncio.to_thread(_run_video_analysis, submission, None, settings))
+        if settings.worker_enable_video_analysis:
+            # Demo video analysis is included in submission_analysis when a video artifact exists.
+            tasks["video"] = asyncio.create_task(
+                asyncio.to_thread(_run_video_analysis, submission, None, settings),
+                name="submission:video",
+            )
+        else:
+            result["video"] = {"skipped": True, "reason": "WORKER_ENABLE_VIDEO_ANALYSIS=false"}
 
         if not tasks:
             return result
@@ -130,6 +141,8 @@ def _run_job_by_type(
     if job_type == "ppt_analysis":
         return {"ppt": _run_ppt_analysis(submission, settings)}
     if job_type == "video_analysis":
+        if not settings.worker_enable_video_analysis:
+            return {"video": {"skipped": True, "reason": "WORKER_ENABLE_VIDEO_ANALYSIS=false"}}
         return {"video": _run_video_analysis(submission, job, settings)}
     raise RuntimeError(f"Unsupported job_type: {job_type}")
 
@@ -193,18 +206,12 @@ def _run_video_analysis(submission: Submission, _job: AnalysisJob | None, settin
     storage = S3StorageService(settings)
     with tempfile.NamedTemporaryFile(delete=True, suffix=suffix) as temp_file:
         storage.download_file(artifact.object_key, temp_file.name)
-        raw = run_demo_video_analysis(
+        raw, parsed = run_demo_video_analysis(
             Path(temp_file.name),
             assignment_title=assignment_title,
             required_features=required_features,
             settings=settings,
         )
-
-    parsed: dict[str, Any] | None = None
-    try:
-        parsed = extract_json_object(raw)
-    except (json.JSONDecodeError, ValueError):
-        parsed = None
 
     return {"raw_output": raw, "parsed": parsed}
 
