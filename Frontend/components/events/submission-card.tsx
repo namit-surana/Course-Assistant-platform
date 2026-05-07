@@ -142,6 +142,11 @@ export function SubmissionCard({ submission, eventId, isSelected = false, onClic
 }
 
 function StatusPill({ status }: { status: AnalysisRunState["status"] }) {
+  if (status === "submitted") return (
+    <span className="flex items-center gap-1 rounded-full bg-neutral-800 px-2 py-0.5 text-[11px] font-medium text-neutral-400">
+      <Clock className="h-2.5 w-2.5" /> Submitted
+    </span>
+  );
   if (status === "queued") return (
     <span className="flex items-center gap-1 rounded-full bg-neutral-800 px-2 py-0.5 text-[11px] font-medium text-neutral-400">
       <Clock className="h-2.5 w-2.5" /> Queued

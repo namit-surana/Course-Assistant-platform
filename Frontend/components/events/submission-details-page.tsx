@@ -120,7 +120,11 @@ export function SubmissionDetailsPage({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [detail?.status, submissionId]);
 
-  const repoAnalysis = detail?.feedback?.raw_result?.repository?.repository_analysis;
+  const repositoryResult = detail?.feedback?.raw_result?.repository;
+  const repoAnalysis = repositoryResult?.repository_analysis;
+  const repoError = repositoryResult?.error;
+  const displayStatus: RunStatus | undefined =
+    detail?.status === "completed" && repoError && !repoAnalysis ? "failed" : detail?.status;
   const ppt = detail?.feedback?.raw_result?.ppt ?? null;
   const video = detail?.feedback?.raw_result?.video ?? null;
 
@@ -151,29 +155,29 @@ export function SubmissionDetailsPage({
   }
 
   const repoTabState: "ok" | "running" | "missing" | "failed" =
-    detail?.status === "failed"
+    displayStatus === "failed" || repoError
       ? "failed"
       : repoAnalysis
         ? "ok"
-        : detail?.status === "running" || detail?.status === "queued"
+        : displayStatus === "running" || displayStatus === "queued"
           ? "running"
           : "missing";
 
   const pptTabState: "ok" | "running" | "missing" | "failed" =
-    detail?.status === "failed"
+    displayStatus === "failed"
       ? "failed"
       : ppt && !ppt.skipped && !ppt.error
         ? "ok"
-        : detail?.status === "running" || detail?.status === "queued"
+        : displayStatus === "running" || displayStatus === "queued"
           ? "running"
           : "missing";
 
   const videoTabState: "ok" | "running" | "missing" | "failed" =
-    detail?.status === "failed"
+    displayStatus === "failed"
       ? "failed"
       : video && !video.skipped && !video.error
         ? "ok"
-        : detail?.status === "running" || detail?.status === "queued"
+        : displayStatus === "running" || displayStatus === "queued"
           ? "running"
           : "missing";
 
@@ -196,7 +200,7 @@ export function SubmissionDetailsPage({
                 <h1 className="truncate text-sm font-semibold text-white sm:text-base">
                   {detail?.team_name ?? "Submission"}
                 </h1>
-                {detail ? statusPill(detail.status) : null}
+                {displayStatus ? statusPill(displayStatus) : null}
               </div>
 
               <div className="mt-0.5 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-neutral-500">
@@ -222,9 +226,9 @@ export function SubmissionDetailsPage({
               disabled={
                 starting ||
                 !detail ||
-                detail.status === "queued" ||
-                detail.status === "running" ||
-                detail.status === "completed"
+                displayStatus === "queued" ||
+                displayStatus === "running" ||
+                displayStatus === "completed"
               }
               className="rounded-lg bg-emerald-600 px-3 py-2 text-xs font-semibold text-white hover:bg-emerald-500 disabled:opacity-50"
             >
@@ -278,7 +282,14 @@ export function SubmissionDetailsPage({
             </div>
 
             {activeTab === "repository" ? (
-              <ResultsPanel analysis={repoAnalysis} hideHeader />
+              repoError ? (
+                <section className="rounded-[1.75rem] border border-red-500/20 bg-red-500/5 p-6">
+                  <h2 className="text-lg font-semibold text-red-100">Repository analysis failed</h2>
+                  <p className="mt-2 text-sm leading-7 text-red-200/80">{repoError}</p>
+                </section>
+              ) : (
+                <ResultsPanel analysis={repoAnalysis} hideHeader />
+              )
             ) : null}
 
             {activeTab === "presentation" ? (
@@ -475,4 +486,3 @@ function TabButton({
     </button>
   );
 }
-

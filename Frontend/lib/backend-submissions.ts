@@ -1,6 +1,8 @@
 import type {
   AnalysisRunState,
   AnalyzeResponse,
+  ItemStatus,
+  RunPhaseState,
   RubricCriterionInput,
   WorkerArtifactInput,
   WorkerSubmissionDetail,
@@ -184,26 +186,24 @@ export function mapWorkerSubmissionToRun(
   previousRun: AnalysisRunState
 ): AnalysisRunState {
   const repositoryResult = detail.feedback?.raw_result?.repository;
+  const repositoryHasFindings = Boolean(repositoryResult?.repository_analysis);
+  const repositoryError = repositoryResult?.error;
+  const effectiveStatus =
+    detail.status === "completed" && repositoryError && !repositoryHasFindings
+      ? "failed"
+      : detail.status;
 
-  const fallbackResult: AnalyzeResponse | undefined =
-    repositoryResult ||
-    (detail.feedback
-      ? {
-          status: "success",
-          repo_url: detail.repo_url || previousRun.request.repo_url,
-          owner: "",
-          repo: "",
-          branch: detail.branch || previousRun.request.branch || "",
-        }
-      : undefined);
+  const fallbackResult: AnalyzeResponse | undefined = repositoryHasFindings
+    ? repositoryResult
+    : undefined;
 
   return buildWorkerRun({
     id: previousRun.id,
     repoUrl: detail.repo_url || previousRun.request.repo_url,
     branch: detail.branch || previousRun.request.branch,
-    status: detail.status,
-    error: detail.error_message || undefined,
-    activity: activityForStatus(detail.status),
+    status: effectiveStatus,
+    error: detail.error_message || repositoryError || undefined,
+    activity: activityForStatus(effectiveStatus),
     result: fallbackResult,
     summary: detail.feedback?.summary || undefined,
     startedAt: previousRun.started_at,
@@ -291,7 +291,7 @@ function buildWorkerRun({
     branch: branch || undefined,
     current_activity: activity,
     error,
-    phases: [],
+    phases: buildWorkerPhases(status),
     events: [],
     result,
     markdown_report_content: summary,
@@ -300,6 +300,48 @@ function buildWorkerRun({
     completed_at:
       status === "completed" || status === "failed" ? now : null,
   };
+}
+
+function buildWorkerPhases(status: AnalysisRunState["status"]): RunPhaseState[] {
+  const phaseStatus = (index: number): ItemStatus => {
+    if (status === "submitted") return "pending";
+    if (status === "queued") return index === 0 ? "in-progress" : "pending";
+    if (status === "running") return index < 2 ? "completed" : index === 2 ? "in-progress" : "pending";
+    if (status === "completed") return "completed";
+    if (status === "failed") return index === 0 ? "failed" : "pending";
+    return "pending";
+  };
+
+  return [
+    {
+      id: "queued",
+      title: "Queued",
+      description: "Analysis job is waiting for the worker.",
+      status: phaseStatus(0),
+      subtasks: [],
+    },
+    {
+      id: "fetch",
+      title: "Fetch Inputs",
+      description: "Load submitted repository and artifact inputs.",
+      status: phaseStatus(1),
+      subtasks: [],
+    },
+    {
+      id: "analyze",
+      title: "Analyze",
+      description: "Run repository, presentation, and video analyzers as applicable.",
+      status: phaseStatus(2),
+      subtasks: [],
+    },
+    {
+      id: "save",
+      title: "Save Results",
+      description: "Persist final feedback for the dashboard.",
+      status: phaseStatus(3),
+      subtasks: [],
+    },
+  ];
 }
 
 function activityForStatus(status: AnalysisRunState["status"]) {
