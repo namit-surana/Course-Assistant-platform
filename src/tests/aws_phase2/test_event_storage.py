@@ -1,6 +1,7 @@
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
+from src.config.settings import Settings
 from src.db.base import Base
 from src.db.models import Assignment, RubricCriterion
 from src.events.schemas import EventCreateRequest
@@ -37,7 +38,7 @@ def test_create_event_persists_assignment_and_rubric() -> None:
             .order_by(RubricCriterion.sort_order)
             .all()
         )
-        response = build_event_response(session, event)
+        response = build_event_response(session, event, Settings())
 
         assert response.name == "Final Project"
         assert response.teams_total == 0

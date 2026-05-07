@@ -17,6 +17,11 @@ class QueuePublisher(Protocol):
 @dataclass(frozen=True)
 class CreatedSubmission:
     submission: Submission
+    queued: bool = False
+
+
+@dataclass(frozen=True)
+class CreatedAnalysisJob:
     analysis_job: AnalysisJob
     queued: bool
 
@@ -26,7 +31,6 @@ def create_submission(
     request: SubmissionCreateRequest,
     *,
     settings: Settings,
-    queue_publisher: QueuePublisher | None = None,
 ) -> CreatedSubmission:
     rubric_snapshot = [criterion.model_dump(mode="json") for criterion in request.rubric_criteria]
     submission = Submission(
@@ -36,7 +40,7 @@ def create_submission(
         submitter_email=request.submitter_email,
         repo_url=request.repo_url,
         branch=request.branch,
-        status="queued",
+        status="submitted",
         rubric_snapshot=rubric_snapshot or None,
     )
     session.add(submission)
@@ -55,15 +59,43 @@ def create_submission(
             )
         )
 
+    session.commit()
+    session.refresh(submission)
+    return CreatedSubmission(submission=submission, queued=False)
+
+
+def get_submission_detail(session: Session, submission_id: str) -> Submission | None:
+    return session.get(
+        Submission,
+        submission_id,
+        options=[
+            selectinload(Submission.artifacts),
+            selectinload(Submission.feedback_report),
+        ],
+    )
+
+
+def create_submission_analysis_job(
+    session: Session,
+    submission: Submission,
+    *,
+    job_type: str,
+    payload_extra: dict[str, Any] | None = None,
+    queue_publisher: QueuePublisher | None = None,
+) -> CreatedAnalysisJob:
     job_payload = {
+        "job_type": job_type,
         "submission_id": submission.id,
         "event_id": submission.event_id,
         "team_name": submission.team_name,
         "repo_url": submission.repo_url,
         "branch": submission.branch,
     }
+    if payload_extra:
+        job_payload.update(payload_extra)
     analysis_job = AnalysisJob(
         submission_id=submission.id,
+        job_type=job_type,
         status="queued",
         job_payload=job_payload,
     )
@@ -78,29 +110,17 @@ def create_submission(
             analysis_job.sqs_message_id = queue_publisher.send_analysis_job(analysis_job.job_payload or {})
             queued = True
             session.commit()
-        except Exception as exc:
+        except Exception:
             session.rollback()
-            _mark_submission_failed(session, submission.id, analysis_job.id, str(exc))
+            analysis_job = session.get(AnalysisJob, analysis_job.id)
+            if analysis_job is not None:
+                analysis_job.status = "failed"
+                analysis_job.error_message = "Unable to enqueue analysis job."
+            session.commit()
             raise
 
-    session.refresh(submission)
     session.refresh(analysis_job)
-    return CreatedSubmission(
-        submission=submission,
-        analysis_job=analysis_job,
-        queued=queued,
-    )
-
-
-def get_submission_detail(session: Session, submission_id: str) -> Submission | None:
-    return session.get(
-        Submission,
-        submission_id,
-        options=[
-            selectinload(Submission.artifacts),
-            selectinload(Submission.feedback_report),
-        ],
-    )
+    return CreatedAnalysisJob(analysis_job=analysis_job, queued=queued)
 
 
 def _mark_submission_failed(

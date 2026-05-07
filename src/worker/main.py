@@ -52,7 +52,15 @@ def run_worker_forever() -> None:
 def _process_message(queue: SqsQueueService, message: dict[str, Any]) -> bool:
     receipt_handle = message.get("ReceiptHandle")
     try:
-        payload = json.loads(message.get("Body", "{}"))
+        raw_body = message.get("Body", "{}")
+        try:
+            payload = json.loads(raw_body)
+        except json.JSONDecodeError:
+            logger.error("Invalid SQS message body (not JSON): %r", raw_body)
+            if receipt_handle:
+                queue.delete_message(receipt_handle)
+                logger.info("Deleted invalid SQS message")
+            return False
         job_id = payload["job_id"]
         process_analysis_job(job_id)
         if receipt_handle:

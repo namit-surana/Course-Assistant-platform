@@ -40,7 +40,6 @@ function StarBackground({ color }: StarBackgroundProps) {
 
 interface StarButtonProps {
   children: ReactNode;
-  lightWidth?: number;
   duration?: number;
   lightColor?: string;
   backgroundColor?: string;
@@ -51,7 +50,6 @@ interface StarButtonProps {
 
 export function StarButton({
   children,
-  lightWidth = 110,
   duration = 3,
   lightColor = "#FAFAFA",
   backgroundColor = "currentColor",
