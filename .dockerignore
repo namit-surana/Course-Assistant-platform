@@ -1,4 +1,12 @@
 .git
+.gitignore
+.dockerignore
+
+# Local secrets and environment files must never be baked into images.
+.env
+.env.*
+
+# Python local state
 .pytest_cache
 __pycache__
 *.pyc
@@ -8,4 +16,20 @@ __pycache__
 .venv
 venv
 env
+pip-wheel-metadata
+.mypy_cache
+.ruff_cache
+.coverage
+htmlcov
+
+# Runtime/generated artifacts
 outputs
+
+# Frontend is deployed separately and is not needed in API/worker images.
+Frontend/node_modules
+Frontend/.next
+Frontend/out
+Frontend/dist
+Frontend/.turbo
+Frontend/.cache
+Frontend/tsconfig.tsbuildinfo
