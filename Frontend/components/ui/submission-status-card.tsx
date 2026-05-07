@@ -1,5 +1,7 @@
-import { ArrowUpRight, CheckCircle2, Clock3, Loader2, AlertCircle, Play, Eye, RotateCcw } from "lucide-react";
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
+"use client";
+
+import { CheckCircle2, Clock3, Loader2, AlertCircle, Play, Eye, RotateCcw } from "lucide-react";
+import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import type { ComponentType, SVGProps } from "react";
@@ -16,29 +18,29 @@ const statusMeta: Record<SubmissionStatus, {
 }> = {
   submitted: {
     label: "Submitted",
-    badge: "text-slate-900 bg-slate-200/90 ring-slate-300/60",
-    progressColor: "bg-slate-400",
+    badge: "bg-slate-700/60 text-slate-200 border-slate-600/40",
+    progressColor: "bg-slate-500",
     helper: "Submission received and awaiting processing.",
     icon: Clock3,
   },
   processing: {
     label: "Processing",
-    badge: "text-sky-200 bg-sky-500/15 ring-sky-400/20",
-    progressColor: "bg-sky-400",
+    badge: "bg-blue-900/40 text-blue-200 border-blue-700/40",
+    progressColor: "bg-blue-500",
     helper: "Your submission is actively being analyzed.",
     icon: Loader2,
   },
   completed: {
     label: "Completed",
-    badge: "text-emerald-200 bg-emerald-500/15 ring-emerald-400/20",
-    progressColor: "bg-emerald-400",
+    badge: "bg-emerald-900/40 text-emerald-200 border-emerald-700/40",
+    progressColor: "bg-emerald-500",
     helper: "Analysis complete and the report is ready.",
     icon: CheckCircle2,
   },
   failed: {
     label: "Failed",
-    badge: "text-rose-200 bg-rose-500/15 ring-rose-400/20",
-    progressColor: "bg-rose-400",
+    badge: "bg-rose-900/40 text-rose-200 border-rose-700/40",
+    progressColor: "bg-rose-500",
     helper: "An issue occurred during processing.",
     icon: AlertCircle,
   },
@@ -52,6 +54,8 @@ export interface SubmissionStatusCardProps {
   timeLabel: string;
   summary: string;
   details: Array<{ label: string; value: string }>;
+  submissionId?: string;
+  eventId?: string;
 }
 
 export function SubmissionStatusCard({
@@ -62,163 +66,147 @@ export function SubmissionStatusCard({
   timeLabel,
   summary,
   details,
+  submissionId,
+  eventId,
 }: SubmissionStatusCardProps) {
   const [isLoading, setIsLoading] = useState(false);
+  const router = useRouter();
   const meta = statusMeta[status];
   const StatusIcon = meta.icon;
   const progressWidth = `${Math.min(Math.max(progress, 0), 100)}%`;
+  const hasRouteTarget = Boolean(eventId && submissionId);
+
+  const artifactType = details.find((detail) => detail.label === "Artifact type")?.value ?? "—";
+  const reviewEta = details.find((detail) => detail.label === "Review ETA")?.value ?? "—";
+  const nextStep = details.find((detail) => detail.label === "Next step")?.value ?? "—";
+
+  const handleStartAnalysis = () => {
+    setIsLoading(true);
+    console.log("Start Analysis clicked — wire this to the real submission processing flow.");
+    window.setTimeout(() => setIsLoading(false), 800);
+  };
+
+  const handleViewReport = () => {
+    if (hasRouteTarget) {
+      // Navigate to the submission detail page - it exists but may show "not found" for mock data
+      router.push(`/events/${eventId}/submissions/${submissionId}`);
+      return;
+    }
+
+    // For demo/mock data without real routes, show a simple alert
+    alert(`Report for "${title}" - This is a demo. Real reports would show detailed analysis results here.`);
+  };
+
+  const handleRetry = () => {
+    // Retry should trigger the same analysis logic as Start Analysis
+    console.log("Retry clicked for submission:", { submissionId, title, team });
+    // TODO: hook retry into the actual submission retry flow when backend route exists
+    // For now, simulate the same start analysis flow
+    handleStartAnalysis();
+  };
 
   return (
-    <Card className="h-full rounded-[2rem] border border-slate-800/80 bg-gradient-to-br from-slate-950/95 via-slate-900/95 to-slate-950/95 shadow-2xl shadow-slate-950/20 transition duration-300 hover:-translate-y-1 hover:shadow-[0_30px_80px_-36px_rgba(15,23,42,0.55)]">
-      <CardHeader className="grid gap-5 px-6 pb-5 pt-6 sm:grid-cols-[1fr_auto] sm:items-start">
-        <div className="space-y-4">
-          <div className="flex flex-wrap items-center gap-3">
-            <span
-              className={cn(
-                "inline-flex items-center gap-2 rounded-full border px-3 py-1.5 text-xs font-semibold uppercase tracking-[0.18em] ring-1",
-                meta.badge,
-              )}
-            >
-              <StatusIcon className={cn("h-3.5 w-3.5", status === "processing" ? "animate-spin" : "")} />
-              {meta.label}
-            </span>
-
-            <span className="rounded-full bg-slate-900/80 px-3 py-1 text-xs font-medium text-slate-400">
-              {timeLabel}
-            </span>
-          </div>
-
-          <div className="space-y-3">
-            <CardTitle className="text-2xl font-semibold leading-tight text-white sm:text-3xl">{title}</CardTitle>
-            <CardDescription className="max-w-xl text-sm leading-6 text-slate-400 sm:text-base">
-              {summary}
-            </CardDescription>
-          </div>
+    <tr className="border-t border-slate-600/30 text-left text-[13px] text-slate-200 align-top hover:bg-slate-700/20 transition-colors">
+      <td className="px-3 py-4 align-top align-middle">
+        <div className="max-w-[220px]">
+          <p className="font-semibold text-slate-100 truncate">{title}</p>
+          <p className="mt-1 truncate text-[11px] leading-5 text-slate-400">{summary}</p>
+          <p className="mt-2 text-[10px] uppercase tracking-[0.24em] text-slate-500">{timeLabel}</p>
         </div>
-
-        <div className="rounded-[1.75rem] border border-slate-800/80 bg-slate-900/75 p-4 text-right shadow-[inset_0_1px_0_rgba(255,255,255,0.04)]">
-          <p className="text-xs uppercase tracking-[0.24em] text-slate-500">Team</p>
-          <p className="mt-2 text-xl font-semibold text-white">{team}</p>
+      </td>
+      <td className="px-3 py-4 align-top whitespace-nowrap align-middle">
+        <p className="font-medium text-slate-100">{team}</p>
+      </td>
+      <td className="px-3 py-4 align-top align-middle">
+        <div className="flex flex-col gap-1">
+          <span className={cn(
+            "inline-flex items-center gap-1 rounded-full border px-2 py-1 text-[10px] font-semibold uppercase tracking-[0.22em]",
+            meta.badge
+          )}>
+            <StatusIcon className={cn("h-3 w-3", status === "processing" ? "animate-spin" : "")} />
+            {meta.label}
+          </span>
+          <p className="text-[11px] text-slate-400">{meta.helper}</p>
         </div>
-      </CardHeader>
-
-      <CardContent className="grid gap-6 px-6 pb-6 sm:grid-cols-[1.15fr_0.85fr]">
-        <div className="space-y-6">
-          <div className="space-y-4 rounded-3xl border border-slate-800/80 bg-slate-900/75 p-5">
-            <div className="flex items-center justify-between gap-3">
-              <div>
-                <p className="text-sm font-medium text-slate-400">Overall progress</p>
-                <p className="mt-1 text-3xl font-semibold text-white">{Math.round(progress)}%</p>
-              </div>
-              <span className={cn(
-                "rounded-full px-3 py-1.5 text-xs font-semibold uppercase tracking-[0.18em]",
-                meta.badge,
-              )}
-              >
-                {meta.label}
-              </span>
-            </div>
-
-            <div className="space-y-3">
-              <div className="h-3 overflow-hidden rounded-full bg-slate-800">
-                <div
-                  className={cn("h-full rounded-full transition-all duration-500", meta.progressColor)}
-                  style={{ width: progressWidth }}
-                />
-              </div>
-              <p className="text-sm text-slate-500">{meta.helper}</p>
-            </div>
-          </div>
-
-          <div className="grid gap-3 sm:grid-cols-2">
-            {details.map((detail) => (
-              <div key={detail.label} className="rounded-3xl bg-slate-900/75 p-4 ring-1 ring-slate-800/70">
-                <p className="text-sm font-medium text-slate-400">{detail.label}</p>
-                <p className="mt-2 text-base font-semibold text-white">{detail.value}</p>
-              </div>
-            ))}
-          </div>
+      </td>
+      <td className="px-3 py-4 align-top w-[90px] align-middle">
+        <div className="font-semibold text-slate-100">{Math.round(progress)}%</div>
+        <div className="mt-2 h-2 rounded-full bg-slate-600/40">
+          <div
+            className={cn("h-full rounded-full transition-all duration-700 ease-out", meta.progressColor)}
+            style={{ width: progressWidth }}
+          />
         </div>
-
-        <div className="rounded-3xl bg-slate-900/75 p-5 ring-1 ring-slate-800/80">
-          <div className="flex items-center justify-between text-sm text-slate-400">
-            <p className="font-medium">Status details</p>
-            <ArrowUpRight className="h-4 w-4 text-slate-400" />
-          </div>
-          <p className="mt-4 text-sm leading-6 text-slate-300">{summary}</p>
-
-          <div className="mt-6 space-y-3">
-            <div className="flex items-center justify-between rounded-3xl bg-slate-950/60 px-4 py-3 text-sm text-slate-300">
-              <span>File validation</span>
-              <span className="text-slate-100">Complete</span>
-            </div>
-            <div className="flex items-center justify-between rounded-3xl bg-slate-950/60 px-4 py-3 text-sm text-slate-300">
-              <span>Review readiness</span>
-              <span className="text-slate-100">Queued</span>
-            </div>
-          </div>
-        </div>
-      </CardContent>
-
-      {status === "submitted" && (
-        <div className="px-6 pb-6">
+      </td>
+      <td className="px-3 py-4 align-top whitespace-nowrap align-middle">
+        <p className="font-medium text-slate-100">{artifactType}</p>
+      </td>
+      <td className="px-3 py-4 align-top whitespace-nowrap align-middle">
+        <p className="font-medium text-slate-100">{reviewEta}</p>
+      </td>
+      <td className="px-3 py-4 align-top whitespace-nowrap align-middle">
+        <p className="font-medium text-slate-100">{nextStep}</p>
+      </td>
+      <td className="px-3 py-4 align-top w-[132px] align-middle">
+        {status === "submitted" && (
           <Button
-            onClick={() => setIsLoading(true)}
+            type="button"
+            onClick={handleStartAnalysis}
             disabled={isLoading}
             className={cn(
-              "w-full rounded-2xl font-semibold py-3 text-white transition-all duration-200",
-              "bg-gradient-to-r from-blue-600 to-blue-500 hover:from-blue-700 hover:to-blue-600",
-              "hover:shadow-lg hover:shadow-blue-500/25 hover:scale-[1.02]",
-              "disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:scale-100",
-              "focus:ring-2 focus:ring-blue-500/50 focus:outline-none"
+              "w-full rounded-lg px-3 py-2 font-semibold text-xs transition-all duration-200",
+              "bg-slate-700 text-slate-100 hover:bg-slate-600 border border-slate-600/50",
+              "disabled:opacity-50 disabled:cursor-not-allowed",
+              "focus:ring-2 focus:ring-slate-500/40 focus:outline-none"
             )}
           >
             {isLoading ? (
               <>
-                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                Starting Analysis...
+                <Loader2 className="mr-1 h-3.5 w-3.5 animate-spin" />
+                Starting...
               </>
             ) : (
               <>
-                <Play className="mr-2 h-4 w-4" />
-                Start Analysis
+                <Play className="mr-1 h-3.5 w-3.5" />
+                Start
               </>
             )}
           </Button>
-        </div>
-      )}
+        )}
 
-      {status === "completed" && (
-        <div className="px-6 pb-6">
+        {status === "processing" && (
           <Button
-            className={cn(
-              "w-full rounded-2xl font-semibold py-3 text-white transition-all duration-200",
-              "bg-gradient-to-r from-emerald-600 to-emerald-500 hover:from-emerald-700 hover:to-emerald-600",
-              "hover:shadow-lg hover:shadow-emerald-500/25 hover:scale-[1.02]",
-              "focus:ring-2 focus:ring-emerald-500/50 focus:outline-none"
-            )}
+            type="button"
+            disabled
+            className="w-full rounded-lg bg-slate-700/50 text-slate-300 font-semibold text-xs border border-slate-600/40 px-3 py-2"
           >
-            <Eye className="mr-2 h-4 w-4" />
-            View Report
+            <Loader2 className="mr-1 h-3.5 w-3.5 animate-spin text-slate-400" />
+            In progress
           </Button>
-        </div>
-      )}
+        )}
 
-      {status === "failed" && (
-        <div className="px-6 pb-6">
+        {status === "completed" && (
           <Button
-            className={cn(
-              "w-full rounded-2xl font-semibold py-3 text-white transition-all duration-200",
-              "bg-gradient-to-r from-rose-600 to-rose-500 hover:from-rose-700 hover:to-rose-600",
-              "hover:shadow-lg hover:shadow-rose-500/25 hover:scale-[1.02]",
-              "focus:ring-2 focus:ring-rose-500/50 focus:outline-none"
-            )}
+            type="button"
+            onClick={handleViewReport}
+            className="w-full rounded-lg bg-emerald-700 text-white font-semibold text-xs transition-all duration-200 hover:bg-emerald-600 border border-emerald-600/50 focus:ring-2 focus:ring-emerald-500/40 focus:outline-none px-3 py-2"
           >
-            <RotateCcw className="mr-2 h-4 w-4" />
-            Retry Analysis
+            <Eye className="mr-1 h-3.5 w-3.5" />
+            View
           </Button>
-        </div>
-      )}
-    </Card>
+        )}
+
+        {status === "failed" && (
+          <Button
+            type="button"
+            onClick={handleRetry}
+            className="w-full rounded-lg bg-rose-500 text-white font-semibold text-xs transition-all duration-200 hover:bg-rose-400 border border-rose-500/50 focus:ring-2 focus:ring-rose-400/40 focus:outline-none px-3 py-2"
+          >
+            <RotateCcw className="mr-1 h-3.5 w-3.5" />
+            Retry
+          </Button>
+        )}
+      </td>
+    </tr>
   );
 }
