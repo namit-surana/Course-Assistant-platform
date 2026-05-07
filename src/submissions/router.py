@@ -7,7 +7,7 @@ from sqlalchemy.orm import Session, selectinload
 from src.aws.s3_service import S3StorageService, build_upload_object_key
 from src.aws.sqs_service import SqsQueueService
 from src.config.settings import Settings, get_settings
-from src.db.models import FeedbackReport, Submission
+from src.db.models import FeedbackReport, Submission, SubmissionArtifact
 from src.db.session import get_db_session
 from src.submissions.schemas import (
     FeedbackReportResponse,
@@ -17,12 +17,13 @@ from src.submissions.schemas import (
     SubmissionCreateRequest,
     SubmissionDetailResponse,
     SubmissionResponse,
+    SubmissionArtifactAnalysisStartResponse,
     SubmissionArtifactResponse,
 )
-from src.submissions.service import create_submission
+from src.submissions.service import create_submission, create_submission_analysis_job
 
 
-router = APIRouter(prefix="/api/submissions", tags=["submissions"])
+router = APIRouter(prefix="/submissions", tags=["submissions"])
 
 
 def get_queue_publisher(settings: Settings = Depends(get_settings)) -> SqsQueueService | None:
@@ -58,14 +59,12 @@ def submit_project(
     request: SubmissionCreateRequest,
     session: Session = Depends(get_db_session),
     settings: Settings = Depends(get_settings),
-    queue_publisher: SqsQueueService | None = Depends(get_queue_publisher),
 ) -> SubmissionResponse:
     try:
         created = create_submission(
             session,
             request,
             settings=settings,
-            queue_publisher=queue_publisher,
         )
     except RuntimeError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
@@ -73,9 +72,151 @@ def submit_project(
     return SubmissionResponse(
         id=created.submission.id,
         status=created.submission.status,
-        analysis_job_id=created.analysis_job.id,
-        sqs_message_id=created.analysis_job.sqs_message_id,
+        queued=False,
+    )
+
+
+@router.post(
+    "/{submission_id}/processing/start",
+    response_model=SubmissionArtifactAnalysisStartResponse,
+)
+def start_submission_processing(
+    submission_id: str,
+    session: Session = Depends(get_db_session),
+    queue_publisher: SqsQueueService | None = Depends(get_queue_publisher),
+) -> SubmissionArtifactAnalysisStartResponse:
+    submission = session.get(
+        Submission,
+        submission_id,
+        options=[selectinload(Submission.artifacts)],
+    )
+    if submission is None:
+        raise HTTPException(status_code=404, detail="Submission not found.")
+    try:
+        created = create_submission_analysis_job(
+            session,
+            submission,
+            job_type="submission_analysis",
+            queue_publisher=queue_publisher,
+        )
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+    return SubmissionArtifactAnalysisStartResponse(
+        submission_id=submission.id,
+        job_id=created.analysis_job.id,
+        job_type=created.analysis_job.job_type,
+        status=created.analysis_job.status,
         queued=created.queued,
+        sqs_message_id=created.analysis_job.sqs_message_id,
+    )
+
+
+@router.post(
+    "/{submission_id}/video-analysis/start",
+    response_model=SubmissionArtifactAnalysisStartResponse,
+)
+def start_submission_video_analysis(
+    submission_id: str,
+    session: Session = Depends(get_db_session),
+    queue_publisher: SqsQueueService | None = Depends(get_queue_publisher),
+) -> SubmissionArtifactAnalysisStartResponse:
+    submission = session.get(
+        Submission,
+        submission_id,
+        options=[selectinload(Submission.artifacts)],
+    )
+    if submission is None:
+        raise HTTPException(status_code=404, detail="Submission not found.")
+    video_artifact = _pick_video_artifact(submission.artifacts)
+    if video_artifact is None:
+        raise HTTPException(status_code=400, detail="No video artifact found for this submission.")
+
+    try:
+        created = create_submission_analysis_job(
+            session,
+            submission,
+            job_type="video_analysis",
+            queue_publisher=queue_publisher,
+        )
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+    return SubmissionArtifactAnalysisStartResponse(
+        submission_id=submission.id,
+        job_id=created.analysis_job.id,
+        job_type=created.analysis_job.job_type,
+        status=created.analysis_job.status,
+        queued=created.queued,
+        sqs_message_id=created.analysis_job.sqs_message_id,
+    )
+
+
+@router.post(
+    "/{submission_id}/git-analysis/start",
+    response_model=SubmissionArtifactAnalysisStartResponse,
+)
+def start_submission_git_analysis(
+    submission_id: str,
+    session: Session = Depends(get_db_session),
+    queue_publisher: SqsQueueService | None = Depends(get_queue_publisher),
+) -> SubmissionArtifactAnalysisStartResponse:
+    submission = session.get(Submission, submission_id)
+    if submission is None:
+        raise HTTPException(status_code=404, detail="Submission not found.")
+    if not submission.repo_url:
+        raise HTTPException(status_code=400, detail="No repository URL found for this submission.")
+
+    created = create_submission_analysis_job(
+        session,
+        submission,
+        job_type="git_analysis",
+        queue_publisher=queue_publisher,
+    )
+    return SubmissionArtifactAnalysisStartResponse(
+        submission_id=submission.id,
+        job_id=created.analysis_job.id,
+        job_type=created.analysis_job.job_type,
+        status=created.analysis_job.status,
+        queued=created.queued,
+        sqs_message_id=created.analysis_job.sqs_message_id,
+    )
+
+
+@router.post(
+    "/{submission_id}/ppt-analysis/start",
+    response_model=SubmissionArtifactAnalysisStartResponse,
+)
+def start_submission_ppt_analysis(
+    submission_id: str,
+    session: Session = Depends(get_db_session),
+    queue_publisher: SqsQueueService | None = Depends(get_queue_publisher),
+) -> SubmissionArtifactAnalysisStartResponse:
+    submission = session.get(
+        Submission,
+        submission_id,
+        options=[selectinload(Submission.artifacts)],
+    )
+    if submission is None:
+        raise HTTPException(status_code=404, detail="Submission not found.")
+
+    ppt_artifact = _pick_ppt_artifact(submission.artifacts)
+    if ppt_artifact is None:
+        raise HTTPException(status_code=400, detail="No PPT/PDF artifact found for this submission.")
+
+    created = create_submission_analysis_job(
+        session,
+        submission,
+        job_type="ppt_analysis",
+        queue_publisher=queue_publisher,
+    )
+    return SubmissionArtifactAnalysisStartResponse(
+        submission_id=submission.id,
+        job_id=created.analysis_job.id,
+        job_type=created.analysis_job.job_type,
+        status=created.analysis_job.status,
+        queued=created.queued,
+        sqs_message_id=created.analysis_job.sqs_message_id,
     )
 
 
@@ -197,3 +338,19 @@ def _submission_to_detail(submission: Submission) -> SubmissionDetailResponse:
         created_at=submission.created_at,
         updated_at=submission.updated_at,
     )
+
+
+def _pick_video_artifact(artifacts: list[SubmissionArtifact]) -> SubmissionArtifact | None:
+    candidates = [artifact for artifact in artifacts if artifact.kind == "video"]
+    if not candidates:
+        return None
+    candidates.sort(key=lambda artifact: artifact.created_at, reverse=True)
+    return candidates[0]
+
+
+def _pick_ppt_artifact(artifacts: list[SubmissionArtifact]) -> SubmissionArtifact | None:
+    candidates = [artifact for artifact in artifacts if artifact.kind == "ppt"]
+    if not candidates:
+        return None
+    candidates.sort(key=lambda artifact: artifact.created_at, reverse=True)
+    return candidates[0]

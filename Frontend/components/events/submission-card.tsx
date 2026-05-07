@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef } from "react";
+import { useEffect } from "react";
 import { motion } from "framer-motion";
 import {
   GitBranch,
@@ -15,9 +15,6 @@ import { useEventsStore } from "@/lib/events-store";
 import { fetchWorkerSubmission, mapWorkerSubmissionToRun } from "@/lib/backend-submissions";
 import type { Submission, AnalysisRunState } from "@/lib/types";
 
-const API_BASE_URL =
-  process.env.NEXT_PUBLIC_API_BASE_URL?.replace(/\/$/, "") || "http://127.0.0.1:8000";
-
 function shortUrl(url: string) {
   return url.replace(/^https?:\/\/(www\.)?github\.com\//, "");
 }
@@ -31,57 +28,32 @@ interface Props {
 
 export function SubmissionCard({ submission, eventId, isSelected = false, onClick }: Props) {
   const updateSubmission = useEventsStore((s) => s.updateSubmission);
-  const sourceRef = useRef<EventSource | null>(null);
   const run = submission.run;
   const voiceStatus = submission.voiceStatus ?? "idle";
+  const videoStatus = submission.videoAnalysisStatus ?? "idle";
 
   useEffect(() => {
     if (run.status !== "queued" && run.status !== "running") return;
 
-    if (submission.workerSubmissionId) {
-      let active = true;
-      async function refreshWorkerSubmission() {
-        if (!submission.workerSubmissionId) return;
-        try {
-          const detail = await fetchWorkerSubmission(submission.workerSubmissionId);
-          if (!active) return;
-          updateSubmission(eventId, submission.runId, mapWorkerSubmissionToRun(detail, run));
-        } catch {}
-      }
-
-      void refreshWorkerSubmission();
-      const intervalId = window.setInterval(refreshWorkerSubmission, 5000);
-      return () => {
-        active = false;
-        window.clearInterval(intervalId);
-      };
+    // We don't currently have a backend SSE stream for runs in this flow.
+    // Poll the submission detail instead; it reflects the latest status + feedback.
+    let active = true;
+    async function refreshSubmission() {
+      try {
+        const detail = await fetchWorkerSubmission(submission.id);
+        if (!active) return;
+        updateSubmission(eventId, submission.id, mapWorkerSubmissionToRun(detail, run));
+      } catch {}
     }
 
-    const source = new EventSource(`${API_BASE_URL}/api/runs/${submission.runId}/stream`);
-    sourceRef.current = source;
-
-    source.addEventListener("run", (e) => {
-      const payload = JSON.parse(e.data) as AnalysisRunState;
-      updateSubmission(eventId, submission.runId, payload);
-      if (payload.status === "completed" || payload.status === "failed") {
-        source.close();
-      }
-    });
-
-    source.onerror = async () => {
-      source.close();
-      try {
-        const resp = await fetch(`${API_BASE_URL}/api/runs/${submission.runId}`);
-        if (resp.ok) {
-          const payload = (await resp.json()) as AnalysisRunState;
-          updateSubmission(eventId, submission.runId, payload);
-        }
-      } catch {}
+    void refreshSubmission();
+    const intervalId = window.setInterval(refreshSubmission, 2000);
+    return () => {
+      active = false;
+      window.clearInterval(intervalId);
     };
-
-    return () => source.close();
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [eventId, run.status, submission.runId, submission.workerSubmissionId, updateSubmission]);
+  }, [eventId, run.status, submission.id, updateSubmission]);
 
   const totalPhases = run.phases.length;
   const donePhases  = run.phases.filter((p) => p.status === "completed").length;
@@ -163,13 +135,18 @@ export function SubmissionCard({ submission, eventId, isSelected = false, onClic
       )}
 
       <p className="px-4 pb-3 text-[11px] text-neutral-500">
-        Voice: {voiceStatus}
+        Voice: {voiceStatus} • Video: {videoStatus}
       </p>
     </motion.button>
   );
 }
 
 function StatusPill({ status }: { status: AnalysisRunState["status"] }) {
+  if (status === "submitted") return (
+    <span className="flex items-center gap-1 rounded-full bg-neutral-800 px-2 py-0.5 text-[11px] font-medium text-neutral-400">
+      <Clock className="h-2.5 w-2.5" /> Submitted
+    </span>
+  );
   if (status === "queued") return (
     <span className="flex items-center gap-1 rounded-full bg-neutral-800 px-2 py-0.5 text-[11px] font-medium text-neutral-400">
       <Clock className="h-2.5 w-2.5" /> Queued

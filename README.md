@@ -116,7 +116,7 @@ Layout of **this repository** (FastAPI + CrewAI analyzer + Next.js UI):
 │
 └── src/                          # Python package root (run as: uvicorn src.app:app)
     ├── __init__.py
-    ├── app.py                    # FastAPI app, routes (/health, /analyze, /api/runs, …)
+    ├── app.py                    # FastAPI app, routes (/health, /api/v1/*, …)
     ├── config/
     │   ├── __init__.py
     │   └── settings.py           # Pydantic settings / env
@@ -138,7 +138,7 @@ Layout of **this repository** (FastAPI + CrewAI analyzer + Next.js UI):
     │       └── crew/
     │           └── config/
     │
-    ├── api_ui/                   # Backend support for live UI (runs, SSE, audit)
+    ├── api_ui/                   # Backend support for run state/progress + audit logging
     │   ├── __init__.py
     │   ├── models/
     │   └── services/             # analysis_run_service, run_store, crewai_live_events, audit_log
@@ -183,7 +183,7 @@ cp .env.example .env
 ### 2. Start the full stack
 
 ```bash
-docker compose up --build
+docker compose -f docker-compose.aws.yml up --build
 ```
 
 This starts:
@@ -193,7 +193,6 @@ This starts:
 | API (FastAPI) | http://localhost:8000 |
 | API Docs (Swagger) | http://localhost:8000/api/docs |
 | PostgreSQL | localhost:5432 |
-| LocalStack (AWS) | http://localhost:4566 |
 
 ### 3. Run database migrations
 
@@ -434,7 +433,7 @@ cd backend
 python -m venv venv
 venv\Scripts\activate        # Windows
 pip install -r requirements.txt
-docker compose up db localstack
+docker compose -f docker-compose.aws.yml up db
 uvicorn app.main:app --reload
 ```
 
@@ -450,8 +449,6 @@ npm run dev    # proxies /api → localhost:8000
 ---
 
 ## Deployment (AWS)
-
-For the local full-stack test workflow, see [LOCAL_TESTING.md](LOCAL_TESTING.md).
 
 For AWS Phase 2 data/storage deployment, see [AWS_PHASE2_DEPLOYMENT.md](AWS_PHASE2_DEPLOYMENT.md).
 
@@ -499,9 +496,9 @@ aws ecs update-service --cluster coursework --service worker --force-new-deploym
 ## Build Phases
 
 - [x] Phase 1 — Project structure, DB models, config
-- [ ] Phase 2 — Auth (Cognito + JWT middleware)
-- [ ] Phase 3 — Core API routes (courses, teams, assignments)
-- [ ] Phase 4 — Submission flow (S3 presigned URLs + SQS)
-- [ ] Phase 5 — AI analysis workers (PPT + video + GitHub)
-- [ ] Phase 6 — Frontend (login, dashboard, submit, feedback)
+- [x] Phase 2 — Auth (Cognito + JWT middleware)
+- [x] Phase 3 — Core API routes (courses, teams, assignments)
+- [x] Phase 4 — Submission flow (S3 presigned URLs + SQS)
+- [x] Phase 5 — AI analysis workers (PPT + video + GitHub)
+- [] Phase 6 — Frontend (login, dashboard, submit, feedback)
 - [ ] Phase 7 — Deployment (ECS + RDS + Terraform)

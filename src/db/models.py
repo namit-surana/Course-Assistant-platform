@@ -5,7 +5,20 @@ from decimal import Decimal
 from typing import Any
 from uuid import uuid4
 
-from sqlalchemy import Boolean, Date, DateTime, ForeignKey, Index, JSON, Numeric, String, Text, func
+from sqlalchemy import (
+    Boolean,
+    CheckConstraint,
+    Date,
+    DateTime,
+    ForeignKey,
+    Index,
+    JSON,
+    Numeric,
+    String,
+    Text,
+    UniqueConstraint,
+    func,
+)
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from src.db.base import Base
@@ -62,6 +75,13 @@ class Course(TimestampMixin, Base):
 
 class CourseMember(TimestampMixin, Base):
     __tablename__ = "course_members"
+    __table_args__ = (
+        UniqueConstraint("course_id", "user_id", name="uq_course_members_course_user"),
+        CheckConstraint(
+            "role IN ('student','ta','professor','instructor','owner')",
+            name="ck_course_members_role",
+        ),
+    )
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
     course_id: Mapped[str] = mapped_column(
@@ -95,6 +115,13 @@ class Team(TimestampMixin, Base):
 
 class TeamMember(TimestampMixin, Base):
     __tablename__ = "team_members"
+    __table_args__ = (
+        UniqueConstraint("team_id", "user_id", name="uq_team_members_team_user"),
+        CheckConstraint(
+            "role IN ('student','ta','lead','owner')",
+            name="ck_team_members_role",
+        ),
+    )
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
     team_id: Mapped[str] = mapped_column(
@@ -174,6 +201,12 @@ class RubricCriterion(TimestampMixin, Base):
 
 class Submission(TimestampMixin, Base):
     __tablename__ = "submissions"
+    __table_args__ = (
+        CheckConstraint(
+            "status IN ('submitted','queued','running','completed','failed')",
+            name="ck_submissions_status",
+        ),
+    )
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
     event_id: Mapped[str | None] = mapped_column(
@@ -189,7 +222,7 @@ class Submission(TimestampMixin, Base):
     submitter_email: Mapped[str | None] = mapped_column(String(320))
     repo_url: Mapped[str | None] = mapped_column(Text)
     branch: Mapped[str | None] = mapped_column(String(255))
-    status: Mapped[str] = mapped_column(String(40), default="queued", nullable=False)
+    status: Mapped[str] = mapped_column(String(40), default="submitted", nullable=False)
     rubric_snapshot: Mapped[list[dict[str, Any]] | None] = mapped_column(JSON)
     error_message: Mapped[str | None] = mapped_column(Text)
 
@@ -212,6 +245,17 @@ class Submission(TimestampMixin, Base):
 
 class SubmissionArtifact(TimestampMixin, Base):
     __tablename__ = "submission_artifacts"
+    __table_args__ = (
+        UniqueConstraint("submission_id", "kind", name="uq_submission_artifacts_submission_kind"),
+        CheckConstraint(
+            "kind IN ('repo','ppt','video','live_audio','attachment')",
+            name="ck_submission_artifacts_kind",
+        ),
+        CheckConstraint(
+            "status IN ('submitted','processing','completed','failed')",
+            name="ck_submission_artifacts_status",
+        ),
+    )
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
     submission_id: Mapped[str] = mapped_column(
@@ -231,10 +275,25 @@ class SubmissionArtifact(TimestampMixin, Base):
 
 class AnalysisJob(TimestampMixin, Base):
     __tablename__ = "analysis_jobs"
+    __table_args__ = (
+        CheckConstraint(
+            "status IN ('queued','running','completed','failed')",
+            name="ck_analysis_jobs_status",
+        ),
+        CheckConstraint(
+            "job_type IN ('submission_analysis','git_analysis','ppt_analysis','video_analysis')",
+            name="ck_analysis_jobs_job_type",
+        ),
+    )
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
     submission_id: Mapped[str] = mapped_column(
         ForeignKey("submissions.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    job_type: Mapped[str] = mapped_column(
+        String(40),
+        default="submission_analysis",
         nullable=False,
     )
     status: Mapped[str] = mapped_column(String(40), default="queued", nullable=False)

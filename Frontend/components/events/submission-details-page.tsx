@@ -1,0 +1,488 @@
+"use client";
+
+import { useEffect, useMemo, useState } from "react";
+import { useRouter } from "next/navigation";
+import {
+  ArrowLeft,
+  ExternalLink,
+  FileText,
+  GitBranch,
+  Loader2,
+  MonitorPlay,
+  Paperclip,
+} from "lucide-react";
+
+import { cn } from "@/lib/utils";
+import type { WorkerSubmissionDetail, RunStatus } from "@/lib/types";
+import {
+  fetchWorkerSubmission,
+  startWorkerSubmissionProcessing,
+} from "@/lib/backend-submissions";
+import { ResultsPanel } from "@/components/analyze/results-panel";
+import { labelForDemoCriterion, labelForPptCriterion } from "@/lib/builtin-rubric-labels";
+
+type TabId = "repository" | "presentation" | "demo" | "artifacts";
+
+function shortRepo(url: string) {
+  return url.replace(/^https?:\/\/(www\.)?github\.com\//, "");
+}
+
+function normalizePptScore(score: number): string {
+  if (!Number.isFinite(score)) return "";
+  // Some models return normalized values in [0, 1]. Display consistently as 0–5.
+  const scaled = score >= 0 && score <= 1 ? score * 5 : score;
+  const clamped = Math.max(0, Math.min(5, scaled));
+  // If it lands on an integer, show as int; otherwise 1 decimal.
+  const rounded = Math.round(clamped * 10) / 10;
+  return Number.isInteger(rounded) ? String(rounded) : rounded.toFixed(1);
+}
+
+function normalizeDemoScore(score: string | undefined): string {
+  if (!score) return "";
+  const raw = score.trim();
+  const asNum = Number(raw);
+  if (Number.isFinite(asNum)) {
+    const clamped = Math.max(0, Math.min(5, asNum));
+    return Number.isInteger(clamped) ? String(clamped) : String(clamped);
+  }
+
+  const key = raw.toLowerCase();
+  const map: Record<string, number> = {
+    exceeds: 5,
+    excellent: 5,
+    strong: 5,
+    meets: 4,
+    good: 4,
+    partial: 2,
+    "partially meets": 2,
+    "needs improvement": 2,
+    weak: 1,
+    poor: 1,
+    fails: 0,
+    fail: 0,
+  };
+  const hit = map[key];
+  if (hit !== undefined) return String(hit);
+  return "";
+}
+
+function statusPill(status: RunStatus) {
+  const base = "inline-flex items-center rounded-full px-2.5 py-0.5 text-[11px] font-semibold";
+  if (status === "submitted") return <span className={cn(base, "bg-neutral-800 text-neutral-300")}>Submitted</span>;
+  if (status === "queued") return <span className={cn(base, "bg-neutral-800 text-neutral-300")}>Queued</span>;
+  if (status === "running") return <span className={cn(base, "bg-violet-500/15 text-violet-200")}>Running</span>;
+  if (status === "completed") return <span className={cn(base, "bg-emerald-500/15 text-emerald-200")}>Completed</span>;
+  return <span className={cn(base, "bg-red-500/15 text-red-200")}>Failed</span>;
+}
+
+function tabBadge(kind: "ok" | "running" | "missing" | "failed") {
+  if (kind === "ok") return <span className="ml-2 h-1.5 w-1.5 rounded-full bg-emerald-400" />;
+  if (kind === "running") return <span className="ml-2 h-1.5 w-1.5 rounded-full bg-violet-400" />;
+  if (kind === "failed") return <span className="ml-2 h-1.5 w-1.5 rounded-full bg-red-400" />;
+  return <span className="ml-2 h-1.5 w-1.5 rounded-full bg-neutral-600" />;
+}
+
+export function SubmissionDetailsPage({
+  eventId,
+  submissionId,
+}: {
+  eventId: string;
+  submissionId: string;
+}) {
+  const router = useRouter();
+  const [detail, setDetail] = useState<WorkerSubmissionDetail | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [starting, setStarting] = useState(false);
+  const [activeTab, setActiveTab] = useState<TabId>("repository");
+
+  async function refresh() {
+    try {
+      const loaded = await fetchWorkerSubmission(submissionId);
+      setDetail(loaded);
+      setError(null);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Unable to load submission.");
+    }
+  }
+
+  useEffect(() => {
+    void refresh();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [submissionId]);
+
+  useEffect(() => {
+    if (!detail) return;
+    if (detail.status !== "queued" && detail.status !== "running") return;
+    const id = window.setInterval(() => {
+      void refresh();
+    }, 2000);
+    return () => window.clearInterval(id);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [detail?.status, submissionId]);
+
+  const repositoryResult = detail?.feedback?.raw_result?.repository;
+  const repoAnalysis = repositoryResult?.repository_analysis;
+  const repoError = repositoryResult?.error;
+  const displayStatus: RunStatus | undefined =
+    detail?.status === "completed" && repoError && !repoAnalysis ? "failed" : detail?.status;
+  const ppt = detail?.feedback?.raw_result?.ppt ?? null;
+  const video = detail?.feedback?.raw_result?.video ?? null;
+
+  const defaultTab = useMemo<TabId>(() => {
+    const hasVideo = Boolean(video && !video.skipped && !video.error);
+    const hasPpt = Boolean(ppt && !ppt.skipped && !ppt.error);
+    if (hasVideo) return "demo";
+    if (hasPpt) return "presentation";
+    return "repository";
+  }, [ppt, video]);
+
+  useEffect(() => {
+    setActiveTab(defaultTab);
+  }, [defaultTab]);
+
+  async function startProcessing() {
+    if (!detail) return;
+    setStarting(true);
+    setError(null);
+    try {
+      await startWorkerSubmissionProcessing({ submissionId: detail.id });
+      await refresh();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Unable to start processing.");
+    } finally {
+      setStarting(false);
+    }
+  }
+
+  const repoTabState: "ok" | "running" | "missing" | "failed" =
+    displayStatus === "failed" || repoError
+      ? "failed"
+      : repoAnalysis
+        ? "ok"
+        : displayStatus === "running" || displayStatus === "queued"
+          ? "running"
+          : "missing";
+
+  const pptTabState: "ok" | "running" | "missing" | "failed" =
+    displayStatus === "failed"
+      ? "failed"
+      : ppt && !ppt.skipped && !ppt.error
+        ? "ok"
+        : displayStatus === "running" || displayStatus === "queued"
+          ? "running"
+          : "missing";
+
+  const videoTabState: "ok" | "running" | "missing" | "failed" =
+    displayStatus === "failed"
+      ? "failed"
+      : video && !video.skipped && !video.error
+        ? "ok"
+        : displayStatus === "running" || displayStatus === "queued"
+          ? "running"
+          : "missing";
+
+  return (
+    <div className="min-h-screen bg-background">
+      <div className="sticky top-0 z-30 border-b border-neutral-800/60 bg-background/80 backdrop-blur-md">
+        <div className="w-full px-4 py-3 sm:px-6">
+          <div className="flex items-center gap-3">
+            <button
+              type="button"
+              onClick={() => router.push(`/events/${eventId}`)}
+              className="flex h-9 w-9 items-center justify-center rounded-lg border border-neutral-800 text-neutral-400 hover:bg-neutral-800 hover:text-white transition-colors"
+              title="Back to event"
+            >
+              <ArrowLeft className="h-4 w-4" />
+            </button>
+
+            <div className="min-w-0 flex-1">
+              <div className="flex flex-wrap items-center gap-2">
+                <h1 className="truncate text-sm font-semibold text-white sm:text-base">
+                  {detail?.team_name ?? "Submission"}
+                </h1>
+                {displayStatus ? statusPill(displayStatus) : null}
+              </div>
+
+              <div className="mt-0.5 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-neutral-500">
+                {detail?.repo_url ? (
+                  <a
+                    href={detail.repo_url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="flex items-center gap-1 hover:text-violet-300"
+                  >
+                    <GitBranch className="h-3 w-3" />
+                    <span className="truncate">{shortRepo(detail.repo_url)}</span>
+                    <ExternalLink className="h-3 w-3 text-neutral-600" />
+                  </a>
+                ) : null}
+                {detail?.updated_at ? <span>Last update: {new Date(detail.updated_at).toLocaleString()}</span> : null}
+              </div>
+            </div>
+
+            <button
+              type="button"
+              onClick={() => void startProcessing()}
+              disabled={
+                starting ||
+                !detail ||
+                displayStatus === "queued" ||
+                displayStatus === "running" ||
+                displayStatus === "completed"
+              }
+              className="rounded-lg bg-emerald-600 px-3 py-2 text-xs font-semibold text-white hover:bg-emerald-500 disabled:opacity-50"
+            >
+              {starting ? "Starting…" : "Start processing"}
+            </button>
+          </div>
+
+          {error ? (
+            <p className="mt-2 text-xs text-red-400">{error}</p>
+          ) : null}
+        </div>
+      </div>
+
+      <div className="w-full px-4 py-6 sm:px-6 space-y-5">
+        {!detail ? (
+          <div className="rounded-2xl border border-neutral-800 bg-neutral-950/40 px-4 py-12 text-center">
+            <Loader2 className="mx-auto h-5 w-5 animate-spin text-neutral-500" />
+            <p className="mt-3 text-sm text-neutral-400">Loading submission…</p>
+          </div>
+        ) : (
+          <>
+            <div className="flex flex-wrap gap-2">
+              <TabButton
+                active={activeTab === "repository"}
+                onClick={() => setActiveTab("repository")}
+                icon={<GitBranch className="h-4 w-4" />}
+              >
+                Repository {tabBadge(repoTabState)}
+              </TabButton>
+              <TabButton
+                active={activeTab === "presentation"}
+                onClick={() => setActiveTab("presentation")}
+                icon={<FileText className="h-4 w-4" />}
+              >
+                Presentation {tabBadge(pptTabState)}
+              </TabButton>
+              <TabButton
+                active={activeTab === "demo"}
+                onClick={() => setActiveTab("demo")}
+                icon={<MonitorPlay className="h-4 w-4" />}
+              >
+                Demo video {tabBadge(videoTabState)}
+              </TabButton>
+              <TabButton
+                active={activeTab === "artifacts"}
+                onClick={() => setActiveTab("artifacts")}
+                icon={<Paperclip className="h-4 w-4" />}
+              >
+                Artifacts
+              </TabButton>
+            </div>
+
+            {activeTab === "repository" ? (
+              repoError ? (
+                <section className="rounded-[1.75rem] border border-red-500/20 bg-red-500/5 p-6">
+                  <h2 className="text-lg font-semibold text-red-100">Repository analysis failed</h2>
+                  <p className="mt-2 text-sm leading-7 text-red-200/80">{repoError}</p>
+                </section>
+              ) : (
+                <ResultsPanel analysis={repoAnalysis} hideHeader />
+              )
+            ) : null}
+
+            {activeTab === "presentation" ? (
+              <section className="rounded-[1.75rem] border border-border/70 bg-card/70 p-6 md:p-7 space-y-4">
+                <h2 className="text-lg font-semibold text-white">Presentation</h2>
+                {!ppt ? (
+                  <p className="text-sm text-muted-foreground">No presentation analysis yet.</p>
+                ) : ppt.error ? (
+                  <p className="text-sm text-red-400">{ppt.error}</p>
+                ) : ppt.skipped ? (
+                  <p className="text-sm text-muted-foreground">{ppt.reason ?? "Presentation analysis skipped."}</p>
+                ) : (
+                  <>
+                    {ppt.ppt_summary ? (
+                      <div className="rounded-2xl border border-border/70 bg-background/30 p-5">
+                        <p className="text-xs font-semibold uppercase tracking-[0.22em] text-blue-400">Summary</p>
+                        <p className="mt-2 whitespace-pre-wrap text-sm leading-7 text-foreground/90">
+                          {ppt.ppt_summary}
+                        </p>
+                      </div>
+                    ) : null}
+
+                    {ppt.criteria_scores && ppt.criteria_scores.length > 0 ? (
+                      <div className="rounded-2xl border border-border/70 bg-background/30 p-5">
+                        <p className="text-xs font-semibold uppercase tracking-[0.22em] text-blue-400">Rubric</p>
+                        <div className="mt-3 overflow-auto rounded-xl border border-border/70">
+                          <table className="w-full min-w-[520px] border-collapse text-left text-[12px]">
+                            <thead>
+                              <tr className="border-b border-border/70 bg-card/70">
+                                <th className="px-3 py-2 font-medium text-muted-foreground">Criterion</th>
+                                <th className="px-3 py-2 font-medium text-muted-foreground">Score (0–5)</th>
+                                <th className="px-3 py-2 font-medium text-muted-foreground">Comment</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {ppt.criteria_scores.map((row, idx) => (
+                                <tr key={`${row.category}-${idx}`} className="border-b border-border/50 last:border-0">
+                                  <td className="px-3 py-2 text-foreground/90">
+                                    {(() => {
+                                      const meta = labelForPptCriterion(row.category);
+                                      const label = meta?.label ?? row.category;
+                                      return (
+                                        <div className="font-medium text-foreground/90">{label}</div>
+                                      );
+                                    })()}
+                                  </td>
+                                  <td className="px-3 py-2 text-foreground/90 tabular-nums">
+                                    {normalizePptScore(row.score)}
+                                  </td>
+                                  <td className="px-3 py-2 text-muted-foreground">{row.comment ?? ""}</td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </div>
+                      </div>
+                    ) : null}
+                  </>
+                )}
+              </section>
+            ) : null}
+
+            {activeTab === "demo" ? (
+              <section className="rounded-[1.75rem] border border-border/70 bg-card/70 p-6 md:p-7 space-y-4">
+                <h2 className="text-lg font-semibold text-white">Demo video</h2>
+                {!video ? (
+                  <p className="text-sm text-muted-foreground">No demo video analysis yet.</p>
+                ) : video.error ? (
+                  <p className="text-sm text-red-400">{video.error}</p>
+                ) : video.skipped ? (
+                  <p className="text-sm text-muted-foreground">{video.reason ?? "Demo analysis skipped."}</p>
+                ) : (
+                  <>
+                    {video.parsed?.summary ? (
+                      <div className="rounded-2xl border border-border/70 bg-background/30 p-5">
+                        <p className="text-xs font-semibold uppercase tracking-[0.22em] text-blue-400">Summary</p>
+                        <p className="mt-2 whitespace-pre-wrap text-sm leading-7 text-foreground/90">
+                          {video.parsed.summary}
+                        </p>
+                      </div>
+                    ) : null}
+
+                    {video.parsed?.limitations ? (
+                      <p className="text-sm text-muted-foreground">
+                        <span className="font-semibold text-foreground/90">Limitations:</span>{" "}
+                        {video.parsed.limitations}
+                      </p>
+                    ) : null}
+
+                    {video.parsed?.rubric && video.parsed.rubric.length > 0 ? (
+                      <div className="rounded-2xl border border-border/70 bg-background/30 p-5">
+                        <p className="text-xs font-semibold uppercase tracking-[0.22em] text-blue-400">Rubric</p>
+                        <div className="mt-3 overflow-auto rounded-xl border border-border/70">
+                          <table className="w-full min-w-[640px] border-collapse text-left text-[12px]">
+                            <thead>
+                              <tr className="border-b border-border/70 bg-card/70">
+                                <th className="px-3 py-2 font-medium text-muted-foreground">Criterion</th>
+                                <th className="px-3 py-2 font-medium text-muted-foreground">Score (0–5)</th>
+                                <th className="px-3 py-2 font-medium text-muted-foreground">Evidence</th>
+                                <th className="px-3 py-2 font-medium text-muted-foreground">Time</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {video.parsed.rubric.map((row, idx) => (
+                                <tr key={`${row.id ?? "row"}-${idx}`} className="border-b border-border/50 last:border-0">
+                                  <td className="px-3 py-2 text-foreground/90">
+                                    {(() => {
+                                      const meta = labelForDemoCriterion(row.id);
+                                      const label = meta?.label ?? row.id ?? "";
+                                      return (
+                                        <div className="font-medium text-foreground/90">{label}</div>
+                                      );
+                                    })()}
+                                  </td>
+                                  <td className="px-3 py-2 text-foreground/90 tabular-nums">
+                                    {normalizeDemoScore(row.score)}
+                                  </td>
+                                  <td className="px-3 py-2 text-muted-foreground">{row.evidence ?? ""}</td>
+                                  <td className="px-3 py-2 text-muted-foreground">{row.timestamps ?? ""}</td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </div>
+                      </div>
+                    ) : null}
+                  </>
+                )}
+              </section>
+            ) : null}
+
+            {activeTab === "artifacts" ? (
+              <section className="rounded-[1.75rem] border border-border/70 bg-card/70 p-6 md:p-7 space-y-4">
+                <h2 className="text-lg font-semibold text-white">Artifacts</h2>
+                {detail.artifacts.length === 0 ? (
+                  <p className="text-sm text-muted-foreground">No artifacts uploaded.</p>
+                ) : (
+                  <div className="space-y-2">
+                    {detail.artifacts.map((a) => (
+                      <div
+                        key={a.id}
+                        className="rounded-2xl border border-border/70 bg-background/30 px-4 py-3"
+                      >
+                        <div className="flex flex-wrap items-center justify-between gap-2">
+                          <p className="text-sm font-medium text-foreground/90">
+                            {a.file_name ?? a.object_key}
+                          </p>
+                          <span className="rounded-full bg-neutral-800 px-2 py-0.5 text-[11px] font-semibold text-neutral-300">
+                            {a.kind}
+                          </span>
+                        </div>
+                        <p className="mt-1 text-xs text-muted-foreground">
+                          Status: {a.status}
+                        </p>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </section>
+            ) : null}
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function TabButton({
+  active,
+  onClick,
+  icon,
+  children,
+}: {
+  active: boolean;
+  onClick: () => void;
+  icon: React.ReactNode;
+  children: React.ReactNode;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={cn(
+        "inline-flex items-center gap-2 rounded-full border px-4 py-2 text-sm font-semibold transition-colors",
+        active
+          ? "border-violet-500/40 bg-violet-500/10 text-violet-100"
+          : "border-neutral-800 bg-neutral-950/40 text-neutral-300 hover:bg-neutral-900",
+      )}
+    >
+      <span className={cn("text-neutral-400", active ? "text-violet-200" : "text-neutral-500")}>
+        {icon}
+      </span>
+      <span className="whitespace-nowrap">{children}</span>
+    </button>
+  );
+}

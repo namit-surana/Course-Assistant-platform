@@ -41,7 +41,6 @@ export function LandingPage() {
                 onClick={() => router.push("/home")}
                 lightColor="#a78bfa"
                 backgroundColor="transparent"
-                lightWidth={140}
                 duration={2.5}
                 className="h-14 px-10 text-base rounded-2xl"
               >
