@@ -26,6 +26,14 @@ class Settings(BaseSettings):
         default="gemini/gemini-2.5-flash",
         alias="REPOSITORY_ANALYSIS_MODEL",
     )
+
+    video_analysis_model: str = Field(default="gemini-2.5-flash", alias="VIDEO_ANALYSIS_MODEL",)
+    video_transcription_model: str = Field(default="gemini-2.5-flash",alias="VIDEO_TRANSCRIPTION_MODEL",)
+    
+    video_large_file_threshold_mb: int = Field(default=100, alias="VIDEO_LARGE_FILE_THRESHOLD_MB", ge=1,)
+    video_file_processing_timeout_seconds: int = Field(default=300, alias="VIDEO_FILE_PROCESSING_TIMEOUT_SECONDS", ge=30,)
+    video_file_poll_interval_seconds: int = Field(default=5, alias="VIDEO_FILE_POLL_INTERVAL_SECONDS", ge=1,)
+
     secret_key: str | None = Field(default=None, alias="SECRET_KEY")
     database_url: str | None = Field(default=None, alias="DATABASE_URL")
     aws_region: str = Field(default="us-east-1", alias="AWS_REGION")
