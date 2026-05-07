@@ -16,6 +16,20 @@ const API_BASE_URL =
 
 const mapJobStatus = (status: "queued" | "running" | "completed" | "failed") => status;
 
+type SubmissionAnalysisStartApiResponse = {
+  submission_id: string;
+  job_id: string;
+  job_type:
+    | "submission_analysis"
+    | "git_analysis"
+    | "ppt_analysis"
+    | "video_analysis"
+    | "final_grading_analysis";
+  status: "queued" | "running" | "completed" | "failed";
+  queued: boolean;
+  sqs_message_id?: string | null;
+};
+
 export async function submitWorkerProject({
   teamName,
   repoUrl,
@@ -98,7 +112,12 @@ export async function startWorkerSubmissionProcessing({
   const started = (await response.json()) as {
     submission_id: string;
     job_id: string;
-    job_type: "submission_analysis" | "git_analysis" | "ppt_analysis" | "video_analysis";
+    job_type:
+      | "submission_analysis"
+      | "git_analysis"
+      | "ppt_analysis"
+      | "video_analysis"
+      | "final_grading_analysis";
     status: "queued" | "running" | "completed" | "failed";
     queued: boolean;
     sqs_message_id?: string | null;
@@ -135,14 +154,64 @@ export async function startWorkerSubmissionVideoAnalysis({
     const failure = await response.json().catch(() => ({}));
     throw new Error(failure.detail || "Unable to start video analysis.");
   }
-  const started = (await response.json()) as {
-    submission_id: string;
-    job_id: string;
-    job_type: "submission_analysis" | "git_analysis" | "ppt_analysis" | "video_analysis";
-    status: "queued" | "running" | "completed" | "failed";
-    queued: boolean;
-    sqs_message_id?: string | null;
+  const started = (await response.json()) as SubmissionAnalysisStartApiResponse;
+  return {
+    ...started,
+    status: mapJobStatus(started.status),
   };
+}
+
+export async function startWorkerSubmissionPptAnalysis({
+  submissionId,
+}: {
+  submissionId: string;
+}): Promise<WorkerVideoAnalysisStartResponse> {
+  const response = await fetch(`${API_BASE_URL}/api/v1/submissions/${submissionId}/ppt-analysis/start`, {
+    method: "POST",
+  });
+  if (!response.ok) {
+    const failure = await response.json().catch(() => ({}));
+    throw new Error(failure.detail || "Unable to start presentation analysis.");
+  }
+  const started = (await response.json()) as SubmissionAnalysisStartApiResponse;
+  return {
+    ...started,
+    status: mapJobStatus(started.status),
+  };
+}
+
+export async function startWorkerSubmissionGitAnalysis({
+  submissionId,
+}: {
+  submissionId: string;
+}): Promise<WorkerVideoAnalysisStartResponse> {
+  const response = await fetch(`${API_BASE_URL}/api/v1/submissions/${submissionId}/git-analysis/start`, {
+    method: "POST",
+  });
+  if (!response.ok) {
+    const failure = await response.json().catch(() => ({}));
+    throw new Error(failure.detail || "Unable to start repository analysis.");
+  }
+  const started = (await response.json()) as SubmissionAnalysisStartApiResponse;
+  return {
+    ...started,
+    status: mapJobStatus(started.status),
+  };
+}
+
+export async function startWorkerSubmissionFinalGrading({
+  submissionId,
+}: {
+  submissionId: string;
+}): Promise<WorkerVideoAnalysisStartResponse> {
+  const response = await fetch(`${API_BASE_URL}/api/v1/submissions/${submissionId}/final-grading/start`, {
+    method: "POST",
+  });
+  if (!response.ok) {
+    const failure = await response.json().catch(() => ({}));
+    throw new Error(failure.detail || "Unable to start final grading.");
+  }
+  const started = (await response.json()) as SubmissionAnalysisStartApiResponse;
   return {
     ...started,
     status: mapJobStatus(started.status),
@@ -160,7 +229,12 @@ export async function fetchWorkerVideoAnalysisJob(jobId: string): Promise<Worker
   const job = (await response.json()) as {
     job_id: string;
     submission_id: string;
-    job_type: "submission_analysis" | "git_analysis" | "ppt_analysis" | "video_analysis";
+    job_type:
+      | "submission_analysis"
+      | "git_analysis"
+      | "ppt_analysis"
+      | "video_analysis"
+      | "final_grading_analysis";
     status: "queued" | "running" | "completed" | "failed";
     attempts: number;
     error?: string | null;

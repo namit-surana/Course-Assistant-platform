@@ -4,22 +4,22 @@ import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import {
   ArrowLeft,
-  CheckCircle2,
-  Clock3,
   ExternalLink,
   FileText,
   GitBranch,
   Loader2,
   MonitorPlay,
   Paperclip,
-  XCircle,
 } from "lucide-react";
 
 import { cn } from "@/lib/utils";
 import type { WorkerSubmissionDetail, RunStatus } from "@/lib/types";
 import {
   fetchWorkerSubmission,
-  startWorkerSubmissionProcessing,
+  startWorkerSubmissionFinalGrading,
+  startWorkerSubmissionGitAnalysis,
+  startWorkerSubmissionPptAnalysis,
+  startWorkerSubmissionVideoAnalysis,
 } from "@/lib/backend-submissions";
 import { ResultsPanel } from "@/components/analyze/results-panel";
 import {
@@ -127,6 +127,7 @@ export function SubmissionDetailsPage({
   const [detail, setDetail] = useState<WorkerSubmissionDetail | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [starting, setStarting] = useState(false);
+  const [startingFinal, setStartingFinal] = useState(false);
   const [activeTab, setActiveTab] = useState<TabId>("repository");
 
   async function refresh() {
@@ -167,6 +168,9 @@ export function SubmissionDetailsPage({
 
   const ppt = detail?.feedback?.raw_result?.ppt ?? null;
   const video = detail?.feedback?.raw_result?.video ?? null;
+  const finalReport = detail?.feedback?.raw_result?.final_grading ?? null;
+  const finalGradingStatus = detail?.feedback?.raw_result?.final_grading_status?.status;
+  const finalGradingError = detail?.feedback?.raw_result?.final_grading_status?.error;
 
   const defaultTab = useMemo<TabId>(() => {
     const hasVideo = Boolean(video && !video.skipped && !video.error);
@@ -188,12 +192,69 @@ export function SubmissionDetailsPage({
     setError(null);
 
     try {
-      await startWorkerSubmissionProcessing({ submissionId: detail.id });
+      const startTasks: Array<{
+        label: string;
+        start: () => Promise<unknown>;
+      }> = [];
+
+      if (detail.repo_url) {
+        startTasks.push({
+          label: "repository",
+          start: () => startWorkerSubmissionGitAnalysis({ submissionId: detail.id }),
+        });
+      }
+
+      if (detail.artifacts.some((artifact) => artifact.kind === "ppt")) {
+        startTasks.push({
+          label: "presentation",
+          start: () => startWorkerSubmissionPptAnalysis({ submissionId: detail.id }),
+        });
+      }
+
+      if (detail.artifacts.some((artifact) => artifact.kind === "video")) {
+        startTasks.push({
+          label: "video",
+          start: () => startWorkerSubmissionVideoAnalysis({ submissionId: detail.id }),
+        });
+      }
+
+      if (startTasks.length === 0) {
+        throw new Error("No repository, presentation, or video artifact available to analyze.");
+      }
+
+      const settled = await Promise.allSettled(startTasks.map((task) => task.start()));
+      const failures = settled.flatMap((result, index) => {
+        if (result.status === "fulfilled") return [];
+        const message = result.reason instanceof Error ? result.reason.message : "Unknown error";
+        return [`${startTasks[index]?.label ?? "analysis"}: ${message}`];
+      });
+
+      if (failures.length === settled.length) {
+        throw new Error(failures.join(" | "));
+      }
+
       await refresh();
+      if (failures.length > 0) {
+        setError(`Some analyses could not start: ${failures.join(" | ")}`);
+      }
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Unable to start processing.");
+      setError(err instanceof Error ? err.message : "Unable to start analyses.");
     } finally {
       setStarting(false);
+    }
+  }
+
+  async function startFinalGrading() {
+    if (!detail) return;
+    setStartingFinal(true);
+    setError(null);
+    try {
+      await startWorkerSubmissionFinalGrading({ submissionId: detail.id });
+      await refresh();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Unable to start final grading.");
+    } finally {
+      setStartingFinal(false);
     }
   }
 
@@ -224,55 +285,6 @@ export function SubmissionDetailsPage({
           ? "running"
           : "missing";
 
-  const statusConfig: Record<
-    RunStatus,
-    {
-      label: string;
-      hint: string;
-      badgeClass: string;
-      icon: React.ReactNode;
-      progress: number;
-    }
-  > = {
-    submitted: {
-      label: "Submitted",
-      hint: "Files were uploaded and are ready for analysis.",
-      badgeClass: "bg-slate-500/15 text-slate-200 border-slate-400/20",
-      icon: <Clock3 className="h-4 w-4" />,
-      progress: 10,
-    },
-    queued: {
-      label: "Processing",
-      hint: "Queued and waiting for the worker to start.",
-      badgeClass: "bg-violet-500/15 text-violet-200 border-violet-400/20",
-      icon: <Loader2 className="h-4 w-4 animate-spin" />,
-      progress: 30,
-    },
-    running: {
-      label: "Processing",
-      hint: "Analyzing repository, presentation, and demo artifacts.",
-      badgeClass: "bg-violet-500/15 text-violet-200 border-violet-400/20",
-      icon: <Loader2 className="h-4 w-4 animate-spin" />,
-      progress: 65,
-    },
-    completed: {
-      label: "Completed",
-      hint: "Analysis is complete and feedback is ready to review.",
-      badgeClass: "bg-emerald-500/15 text-emerald-200 border-emerald-400/20",
-      icon: <CheckCircle2 className="h-4 w-4" />,
-      progress: 100,
-    },
-    failed: {
-      label: "Failed",
-      hint: "Processing stopped. Review errors and retry if needed.",
-      badgeClass: "bg-rose-500/15 text-rose-200 border-rose-400/20",
-      icon: <XCircle className="h-4 w-4" />,
-      progress: 100,
-    },
-  };
-
-  const activeStatus = statusConfig[displayStatus ?? "submitted"];
-
   const pptScore =
     average(
       (ppt?.criteria_scores ?? [])
@@ -290,19 +302,21 @@ export function SubmissionDetailsPage({
         .filter((value) => Number.isFinite(value)),
     ) ?? null;
 
-  const finalScore =
-    average(
-      (detail?.feedback?.scores ?? [])
-        .map((row) => row.score)
-        .filter((value) => Number.isFinite(value)),
-    ) ?? null;
+  const finalScore = finalReport?.overall_score ?? null;
+  const finalMaxScore = finalReport?.overall_max_score ?? null;
 
   const canStartProcessing =
     !starting &&
     Boolean(detail) &&
     displayStatus !== "queued" &&
-    displayStatus !== "running" &&
-    displayStatus !== "completed";
+    displayStatus !== "running";
+  const finalJobRunning = finalGradingStatus === "queued" || finalGradingStatus === "running";
+  const canRunFinalNow =
+    !startingFinal &&
+    Boolean(detail) &&
+    !finalJobRunning &&
+    displayStatus !== "queued" &&
+    displayStatus !== "running";
 
   return (
     <div className="min-h-screen bg-background">
@@ -330,6 +344,7 @@ export function SubmissionDetailsPage({
                   {detail?.team_name ?? "Submission"}
                 </h1>
                 {displayStatus ? statusPill(displayStatus) : null}
+                {finalGradingStatus ? statusPill(finalGradingStatus as RunStatus) : null}
               </div>
 
               <div className="mt-0.5 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-neutral-500">
@@ -365,7 +380,21 @@ export function SubmissionDetailsPage({
               )}
             >
               {starting ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : null}
-              {starting ? "Starting processing..." : "Start Processing"}
+              {starting ? "Starting analyses..." : "Start Analysis"}
+            </button>
+            <button
+              type="button"
+              onClick={() => void startFinalGrading()}
+              disabled={!canRunFinalNow}
+              className={cn(
+                "inline-flex items-center gap-2 rounded-xl px-4 py-2 text-xs font-semibold text-white transition-all",
+                canRunFinalNow
+                  ? "bg-violet-600 shadow-sm shadow-violet-900/30 hover:-translate-y-0.5 hover:bg-violet-500"
+                  : "cursor-not-allowed bg-violet-700/40 text-violet-100/70",
+              )}
+            >
+              {startingFinal ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : null}
+              {startingFinal ? "Starting final grading..." : "Run Final Grade Now"}
             </button>
           </div>
 
@@ -381,82 +410,6 @@ export function SubmissionDetailsPage({
           </div>
         ) : (
           <>
-            <section className="rounded-3xl border border-slate-800/60 bg-slate-900/70 p-5 shadow-xl shadow-black/20 backdrop-blur-md md:p-6">
-              <div className="flex flex-wrap items-start justify-between gap-4">
-                <div className="space-y-3">
-                  <div className="flex items-center gap-2">
-                    <span
-                      className={cn(
-                        "inline-flex items-center gap-1.5 rounded-full border px-3 py-1 text-xs font-semibold shadow-sm",
-                        activeStatus.badgeClass,
-                      )}
-                    >
-                      {activeStatus.icon}
-                    </span>
-
-                    {(displayStatus === "queued" || displayStatus === "running") && (
-                      <span className="inline-flex items-center gap-1.5 text-xs text-slate-400">
-                        <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                        AI analysis running
-                      </span>
-                    )}
-                  </div>
-
-                  <div className="space-y-1">
-                    <h2 className="text-lg font-semibold text-white">
-                      Live Submission Status
-                    </h2>
-
-                    <p className="max-w-2xl text-sm leading-6 text-slate-300">
-                      {activeStatus.hint}
-                    </p>
-                  </div>
-                </div>
-
-                <div className="flex flex-col items-end">
-                  <span className="text-xs uppercase tracking-wider text-slate-500">
-                    Progress
-                  </span>
-                  <span className="mt-1 text-lg font-semibold text-white">
-                    {activeStatus.progress}%
-                  </span>
-                </div>
-              </div>
-
-              <div className="mt-5 h-2.5 w-full overflow-hidden rounded-full bg-slate-800">
-                <div
-                  className="h-full rounded-full bg-gradient-to-r from-blue-500 via-violet-500 to-emerald-400 transition-all duration-700"
-                  style={{ width: `${activeStatus.progress}%` }}
-                />
-              </div>
-
-              <div className="mt-4 flex flex-wrap gap-2">
-                {displayStatus === "submitted" && (
-                  <span className="rounded-full border border-slate-700 bg-slate-800/80 px-3 py-1 text-xs text-slate-300">
-                    Waiting for analysis
-                  </span>
-                )}
-
-                {(displayStatus === "queued" || displayStatus === "running") && (
-                  <span className="rounded-full border border-violet-500/30 bg-violet-500/10 px-3 py-1 text-xs text-violet-200">
-                    AI pipeline active
-                  </span>
-                )}
-
-                {displayStatus === "completed" && (
-                  <span className="rounded-full border border-emerald-500/30 bg-emerald-500/10 px-3 py-1 text-xs text-emerald-200">
-                    Feedback ready
-                  </span>
-                )}
-
-                {displayStatus === "failed" && (
-                  <span className="rounded-full border border-rose-500/30 bg-rose-500/10 px-3 py-1 text-xs text-rose-200">
-                    Needs retry
-                  </span>
-                )}
-              </div>
-            </section>
-
             <section className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
               <ResultSummaryCard
                 title="PPT Feedback"
@@ -504,12 +457,59 @@ export function SubmissionDetailsPage({
               <ResultSummaryCard
                 title="Final Grade Summary"
                 description={
+                  finalReport?.overall_reasoning ??
                   detail.feedback?.summary ??
                   "Final grade summary will be shown once processing is completed."
                 }
-                value={finalScore !== null ? `${finalScore.toFixed(1)} avg` : "Pending"}
+                value={
+                  finalScore !== null && finalMaxScore !== null
+                    ? `${finalScore.toFixed(1)}/${finalMaxScore.toFixed(1)}`
+                    : "Pending"
+                }
                 valueClassName={scoreTone(finalScore)}
               />
+            </section>
+
+            <section className="space-y-4 rounded-[1.75rem] border border-border/70 bg-card/70 p-6 md:p-7">
+              <h2 className="text-lg font-semibold text-white">Final grader report</h2>
+              {!finalReport ? (
+                <p className="text-sm text-muted-foreground">
+                  {finalGradingError
+                    ? `Final grading failed: ${finalGradingError}`
+                    : "Final grader output will appear once the final grading job completes."}
+                </p>
+              ) : (
+                <>
+                  <p className="text-sm leading-7 text-foreground/90">{finalReport.overall_reasoning}</p>
+                  {finalReport.criterion_grades && finalReport.criterion_grades.length > 0 ? (
+                    <div className="overflow-auto rounded-xl border border-border/70">
+                      <table className="w-full min-w-[640px] border-collapse text-left text-[12px]">
+                        <thead>
+                          <tr className="border-b border-border/70 bg-card/70">
+                            <th className="px-3 py-2 font-medium text-muted-foreground">Criterion</th>
+                            <th className="px-3 py-2 font-medium text-muted-foreground">Score</th>
+                            <th className="px-3 py-2 font-medium text-muted-foreground">Reasoning</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {finalReport.criterion_grades.map((row, idx) => (
+                            <tr
+                              key={`${row.criterion}-${idx}`}
+                              className="border-b border-border/50 last:border-0"
+                            >
+                              <td className="px-3 py-2 text-foreground/90">{row.criterion}</td>
+                              <td className="px-3 py-2 text-foreground/90 tabular-nums">
+                                {row.score}/{row.max_score}
+                              </td>
+                              <td className="px-3 py-2 text-muted-foreground">{row.reasoning}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  ) : null}
+                </>
+              )}
             </section>
 
             <div className="flex flex-wrap gap-2">

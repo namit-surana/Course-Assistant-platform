@@ -27,12 +27,15 @@ class Settings(BaseSettings):
         alias="REPOSITORY_ANALYSIS_MODEL",
     )
 
-    video_analysis_model: str = Field(default="gemini-2.5-flash", alias="VIDEO_ANALYSIS_MODEL",)
-    video_transcription_model: str = Field(default="gemini-2.5-flash",alias="VIDEO_TRANSCRIPTION_MODEL",)
+    video_transcription_model: str = Field(default="gemini-2.5-flash", alias="VIDEO_TRANSCRIPTION_MODEL")
     
-    video_large_file_threshold_mb: int = Field(default=100, alias="VIDEO_LARGE_FILE_THRESHOLD_MB", ge=1,)
-    video_file_processing_timeout_seconds: int = Field(default=300, alias="VIDEO_FILE_PROCESSING_TIMEOUT_SECONDS", ge=30,)
-    video_file_poll_interval_seconds: int = Field(default=5, alias="VIDEO_FILE_POLL_INTERVAL_SECONDS", ge=1,)
+    video_large_file_threshold_mb: int = Field(default=100, alias="VIDEO_LARGE_FILE_THRESHOLD_MB", ge=1)
+    video_file_processing_timeout_seconds: int = Field(
+        default=300,
+        alias="VIDEO_FILE_PROCESSING_TIMEOUT_SECONDS",
+        ge=30,
+    )
+    video_file_poll_interval_seconds: int = Field(default=5, alias="VIDEO_FILE_POLL_INTERVAL_SECONDS", ge=1)
 
     secret_key: str | None = Field(default=None, alias="SECRET_KEY")
     database_url: str | None = Field(default=None, alias="DATABASE_URL")
@@ -47,6 +50,11 @@ class Settings(BaseSettings):
         le=86_400,
     )
     sqs_queue_url: str | None = Field(default=None, alias="SQS_QUEUE_URL")
+    sqs_queue_url_submission: str | None = Field(default=None, alias="SQS_QUEUE_URL_SUBMISSION")
+    sqs_queue_url_git: str | None = Field(default=None, alias="SQS_QUEUE_URL_GIT")
+    sqs_queue_url_ppt: str | None = Field(default=None, alias="SQS_QUEUE_URL_PPT")
+    sqs_queue_url_video: str | None = Field(default=None, alias="SQS_QUEUE_URL_VIDEO")
+    sqs_queue_url_final_grading: str | None = Field(default=None, alias="SQS_QUEUE_URL_FINAL_GRADING")
     ses_sender_email: str | None = Field(default=None, alias="SES_SENDER_EMAIL")
     frontend_url: str | None = Field(default=None, alias="FRONTEND_URL")
     cors_allowed_origins_csv: str | None = Field(default=None, alias="CORS_ALLOWED_ORIGINS")
@@ -61,6 +69,7 @@ class Settings(BaseSettings):
         alias="WORKER_ENABLE_REPOSITORY_ANALYSIS",
     )
     worker_enable_video_analysis: bool = Field(default=True, alias="WORKER_ENABLE_VIDEO_ANALYSIS")
+    worker_job_type: str | None = Field(default=None, alias="WORKER_JOB_TYPE")
 
     GEMINI_API_KEY: str | None = Field(default=None, alias="GEMINI_API_KEY")
     elevenlabs_api_key: str | None = Field(default=None, alias="ELEVENLABS_API_KEY")
@@ -77,6 +86,10 @@ class Settings(BaseSettings):
     video_analysis_model: str = Field(
         default="gemini/gemini-2.5-flash",
         alias="VIDEO_ANALYSIS_MODEL",
+    )
+    final_grading_model: str = Field(
+        default="gemini/gemini-2.5-flash",
+        alias="FINAL_GRADING_MODEL",
     )
 
     @property
@@ -98,6 +111,18 @@ class Settings(BaseSettings):
                 if origin.strip()
             )
         return list(dict.fromkeys(origins))
+
+    def has_sqs_queue_configured(self) -> bool:
+        return any(
+            [
+                self.sqs_queue_url,
+                self.sqs_queue_url_submission,
+                self.sqs_queue_url_git,
+                self.sqs_queue_url_ppt,
+                self.sqs_queue_url_video,
+                self.sqs_queue_url_final_grading,
+            ]
+        )
 
 
 @lru_cache(maxsize=1)

@@ -14,6 +14,7 @@ AnalysisJobType = Literal[
     "git_analysis",
     "ppt_analysis",
     "video_analysis",
+    "final_grading_analysis",
 ]
 
 

@@ -38,22 +38,13 @@ export interface EventFormData {
   criteria: Record<string, CriterionState>;
 }
 
-const d = (w: number): CriterionState => ({ selected: true, weight: w });
-
 const INITIAL_DATA: EventFormData = {
   name: "",
   type: "hackathon",
   submissionDeadline: "",
   description: "",
   artifacts: ["repo", "presentation"],
-  criteria: {
-    repo_completeness:  d(20), repo_impl_quality:  d(20), repo_code_quality: d(20), repo_documentation: d(20), repo_depth:        d(20),
-    pres_clarity:       d(20), pres_structure:     d(20), pres_solution:     d(20), pres_design:        d(20), pres_impact:       d(20),
-    report_problem:     d(20), report_methodology: d(20), report_depth:      d(20), report_results:     d(20), report_writing:    d(20),
-    demo_clarity:       d(20), demo_coverage:      d(20), demo_functionality:d(20), demo_narration:     d(20), demo_quality:      d(20),
-    live_clarity:       d(20), live_understanding: d(20), live_delivery:     d(20), live_qa:            d(20), live_coordination: d(20),
-    always_innovation:  d(50), always_impact:      d(50),
-  },
+  criteria: {},
 };
 
 const STEPS = [
@@ -118,6 +109,15 @@ export function CreateEventWizard() {
     if (!canAdvance) return;
     setIsCreating(true);
     try {
+      const selectedArtifacts = new Set(data.artifacts);
+      const filteredCriteria = Object.fromEntries(
+        Object.entries(data.criteria).filter(([, criterion]) => {
+          if (!criterion?.selected || (criterion.weight ?? 0) <= 0) {
+            return false;
+          }
+          return !!criterion.artifactId && selectedArtifacts.has(criterion.artifactId);
+        }),
+      );
       const event = await createEvent({
         name: data.name.trim(),
         type: data.type,
@@ -126,7 +126,7 @@ export function CreateEventWizard() {
         submissionDeadline: data.submissionDeadline,
         judgingDeadline: data.submissionDeadline,
         artifacts: data.artifacts,
-        criteriaConfig: { criteria: data.criteria, artifacts: data.artifacts },
+        criteriaConfig: { criteria: filteredCriteria, artifacts: data.artifacts },
       });
       setShareModal({ open: true, eventId: event.id, eventName: event.name });
     } finally {

@@ -32,13 +32,18 @@ services:
       AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY}
       S3_BUCKET_NAME: ${S3_BUCKET_NAME}
       SQS_QUEUE_URL: ${SQS_QUEUE_URL}
+      SQS_QUEUE_URL_GIT: ${SQS_QUEUE_URL_GIT}
+      SQS_QUEUE_URL_PPT: ${SQS_QUEUE_URL_PPT}
+      SQS_QUEUE_URL_VIDEO: ${SQS_QUEUE_URL_VIDEO}
+      SQS_QUEUE_URL_SUBMISSION: ${SQS_QUEUE_URL_SUBMISSION}
+      SQS_QUEUE_URL_FINAL_GRADING: ${SQS_QUEUE_URL_FINAL_GRADING}
     volumes:
       - ./outputs:/app/outputs
     depends_on:
       db:
         condition: service_healthy
 
-  worker:
+  worker_git:
     build:
       context: .
       dockerfile: Dockerfile.worker
@@ -52,9 +57,74 @@ services:
       AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY}
       AWS_SESSION_TOKEN: ${AWS_SESSION_TOKEN}
       S3_BUCKET_NAME: ${S3_BUCKET_NAME}
-      SQS_QUEUE_URL: ${SQS_QUEUE_URL}
-      WORKER_ENABLE_PPT_ANALYSIS: ${WORKER_ENABLE_PPT_ANALYSIS:-true}
-      WORKER_ENABLE_REPOSITORY_ANALYSIS: ${WORKER_ENABLE_REPOSITORY_ANALYSIS:-true}
+      SQS_QUEUE_URL_GIT: ${SQS_QUEUE_URL_GIT}
+      WORKER_JOB_TYPE: git_analysis
+    volumes:
+      - ./outputs:/app/outputs
+    depends_on:
+      db:
+        condition: service_healthy
+
+  worker_ppt:
+    build:
+      context: .
+      dockerfile: Dockerfile.worker
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      DATABASE_URL: ${DATABASE_URL:-postgresql+psycopg://coursework:coursework@db:5432/coursework}
+      AWS_REGION: ${AWS_REGION:-us-east-1}
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID}
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY}
+      AWS_SESSION_TOKEN: ${AWS_SESSION_TOKEN}
+      S3_BUCKET_NAME: ${S3_BUCKET_NAME}
+      SQS_QUEUE_URL_PPT: ${SQS_QUEUE_URL_PPT}
+      WORKER_JOB_TYPE: ppt_analysis
+    volumes:
+      - ./outputs:/app/outputs
+    depends_on:
+      db:
+        condition: service_healthy
+
+  worker_video:
+    build:
+      context: .
+      dockerfile: Dockerfile.worker
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      DATABASE_URL: ${DATABASE_URL:-postgresql+psycopg://coursework:coursework@db:5432/coursework}
+      AWS_REGION: ${AWS_REGION:-us-east-1}
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID}
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY}
+      AWS_SESSION_TOKEN: ${AWS_SESSION_TOKEN}
+      S3_BUCKET_NAME: ${S3_BUCKET_NAME}
+      SQS_QUEUE_URL_VIDEO: ${SQS_QUEUE_URL_VIDEO}
+      WORKER_JOB_TYPE: video_analysis
+      WORKER_ENABLE_VIDEO_ANALYSIS: ${WORKER_ENABLE_VIDEO_ANALYSIS:-true}
+    volumes:
+      - ./outputs:/app/outputs
+    depends_on:
+      db:
+        condition: service_healthy
+
+  worker_final_grader:
+    build:
+      context: .
+      dockerfile: Dockerfile.worker
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      DATABASE_URL: ${DATABASE_URL:-postgresql+psycopg://coursework:coursework@db:5432/coursework}
+      AWS_REGION: ${AWS_REGION:-us-east-1}
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID}
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY}
+      AWS_SESSION_TOKEN: ${AWS_SESSION_TOKEN}
+      SQS_QUEUE_URL_FINAL_GRADING: ${SQS_QUEUE_URL_FINAL_GRADING}
+      WORKER_JOB_TYPE: final_grading_analysis
     volumes:
       - ./outputs:/app/outputs
     depends_on:

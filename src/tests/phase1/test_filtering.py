@@ -13,6 +13,10 @@ def test_should_exclude_path_for_noise_and_large_files() -> None:
     assert excluded is True
     assert "excluded_extension" in reasons
 
+    excluded, reasons = service.should_exclude_path("fonts/agustina.otf", size=50)
+    assert excluded is True
+    assert "excluded_extension" in reasons
+
     excluded, reasons = service.should_exclude_path("src/generated.bundle.js", size=50)
     assert excluded is True
     assert "excluded_pattern" in reasons

@@ -234,6 +234,27 @@ export interface WorkerFeedbackReport {
       reason?: string;
       error?: string;
     };
+    final_grading?: {
+      overall_score?: number;
+      overall_max_score?: number;
+      overall_reasoning?: string;
+      criterion_grades?: Array<{
+        criterion: string;
+        score: number;
+        max_score: number;
+        reasoning: string;
+        evidence?: string[];
+      }>;
+      key_strengths?: string[];
+      key_improvements?: string[];
+      evidence_summary?: string[];
+      confidence?: string | null;
+      limitations?: string | null;
+    };
+    final_grading_status?: {
+      status?: "queued" | "running" | "completed" | "failed";
+      error?: string | null;
+    };
   } | null;
   scores: Array<{
     category: string;
@@ -269,7 +290,12 @@ export interface WorkerSubmissionDetail {
 export interface WorkerVideoAnalysisStartResponse {
   submission_id: string;
   job_id: string;
-  job_type: "submission_analysis" | "git_analysis" | "ppt_analysis" | "video_analysis";
+  job_type:
+    | "submission_analysis"
+    | "git_analysis"
+    | "ppt_analysis"
+    | "video_analysis"
+    | "final_grading_analysis";
   status: "pending" | "queued" | "running" | "completed" | "failed";
   queued: boolean;
   sqs_message_id?: string | null;
@@ -278,7 +304,12 @@ export interface WorkerVideoAnalysisStartResponse {
 export interface WorkerVideoAnalysisJob {
   job_id: string;
   status: "pending" | "queued" | "running" | "completed" | "failed";
-  job_type?: "submission_analysis" | "git_analysis" | "ppt_analysis" | "video_analysis";
+  job_type?:
+    | "submission_analysis"
+    | "git_analysis"
+    | "ppt_analysis"
+    | "video_analysis"
+    | "final_grading_analysis";
   submission_id?: string;
   attempts?: number;
   video_path?: string | null;

@@ -281,7 +281,7 @@ class AnalysisJob(TimestampMixin, Base):
             name="ck_analysis_jobs_status",
         ),
         CheckConstraint(
-            "job_type IN ('submission_analysis','git_analysis','ppt_analysis','video_analysis')",
+            "job_type IN ('submission_analysis','git_analysis','ppt_analysis','video_analysis','final_grading_analysis')",
             name="ck_analysis_jobs_job_type",
         ),
     )
@@ -300,6 +300,7 @@ class AnalysisJob(TimestampMixin, Base):
     attempts: Mapped[int] = mapped_column(default=0, nullable=False)
     sqs_message_id: Mapped[str | None] = mapped_column(String(255))
     job_payload: Mapped[dict[str, Any] | None] = mapped_column(JSON)
+    result_json: Mapped[dict[str, Any] | None] = mapped_column(JSON)
     error_message: Mapped[str | None] = mapped_column(Text)
     started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))

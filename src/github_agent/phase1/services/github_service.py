@@ -332,9 +332,17 @@ class GitHubService:
             raise MalformedGitHubResponseError(f"GitHub contents response for {path} was malformed.")
 
         try:
-            decoded_content = b64decode(content).decode("utf-8")
+            decoded_bytes = b64decode(content)
         except Exception as exc:  # noqa: BLE001
             raise MalformedGitHubResponseError(f"Unable to decode GitHub file content for {path}.") from exc
+
+        try:
+            decoded_content = decoded_bytes.decode("utf-8")
+        except UnicodeDecodeError:
+            # Some repositories include binary assets in source directories.
+            # Keep the pipeline running by skipping non-text content.
+            logger.info("Skipping non-text GitHub file content for %s", path)
+            decoded_content = ""
 
         return DocumentationFile(
             path=path,

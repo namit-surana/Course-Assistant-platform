@@ -42,6 +42,7 @@ EXCLUDED_EXTENSIONS = {
     ".woff",
     ".woff2",
     ".ttf",
+    ".otf",
     ".eot",
     ".mp4",
     ".mov",

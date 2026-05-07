@@ -100,6 +100,8 @@ def create_submission_analysis_job(
         job_payload=job_payload,
     )
     session.add(analysis_job)
+    submission.status = "queued"
+    submission.error_message = None
     session.flush()
     analysis_job.job_payload = {**job_payload, "job_id": analysis_job.id}
     session.commit()

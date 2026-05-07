@@ -15,9 +15,9 @@ from src.worker.processor import process_analysis_job
 logger = logging.getLogger(__name__)
 
 
-def run_worker_once() -> int:
+def run_worker_once(*, worker_job_type: str | None = None) -> int:
     settings = get_settings()
-    queue = SqsQueueService(settings)
+    queue = SqsQueueService(settings, job_type=worker_job_type)
     processed = 0
     try:
         messages = queue.receive_analysis_jobs()
@@ -30,10 +30,13 @@ def run_worker_once() -> int:
     return processed
 
 
-def run_worker_forever() -> None:
+def run_worker_forever(*, worker_job_type: str | None = None) -> None:
     settings = get_settings()
-    queue = SqsQueueService(settings)
-    logger.info("Worker polling SQS queue")
+    queue = SqsQueueService(settings, job_type=worker_job_type)
+    if worker_job_type:
+        logger.info("Worker polling SQS queue for job_type=%s", worker_job_type)
+    else:
+        logger.info("Worker polling SQS queue")
     while True:
         processed = 0
         try:
@@ -76,6 +79,17 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Coursework analysis worker")
     parser.add_argument("--once", action="store_true", help="Poll SQS once and exit.")
     parser.add_argument("--job-id", help="Process a specific DB analysis job without polling SQS.")
+    parser.add_argument(
+        "--job-type",
+        choices=[
+            "submission_analysis",
+            "git_analysis",
+            "ppt_analysis",
+            "video_analysis",
+            "final_grading_analysis",
+        ],
+        help="Poll only the queue configured for this analysis job type.",
+    )
     args = parser.parse_args()
 
     settings = get_settings()
@@ -84,10 +98,11 @@ def main() -> None:
     if args.job_id:
         process_analysis_job(args.job_id, settings)
         return
+    worker_job_type = args.job_type or settings.worker_job_type
     if args.once:
-        run_worker_once()
+        run_worker_once(worker_job_type=worker_job_type)
         return
-    run_worker_forever()
+    run_worker_forever(worker_job_type=worker_job_type)
 
 
 if __name__ == "__main__":

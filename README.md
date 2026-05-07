@@ -233,7 +233,13 @@ Copy `.env.example` to `.env` and fill in the values:
 | `AWS_ACCESS_KEY_ID` | AWS credentials |
 | `AWS_SECRET_ACCESS_KEY` | AWS credentials |
 | `S3_BUCKET_NAME` | S3 bucket for PPT + video uploads |
-| `SQS_QUEUE_URL` | SQS queue URL for analysis jobs |
+| `SQS_QUEUE_URL` | Fallback SQS queue URL for analysis jobs |
+| `SQS_QUEUE_URL_GIT` | Dedicated SQS queue URL for `git_analysis` jobs |
+| `SQS_QUEUE_URL_PPT` | Dedicated SQS queue URL for `ppt_analysis` jobs |
+| `SQS_QUEUE_URL_VIDEO` | Dedicated SQS queue URL for `video_analysis` jobs |
+| `SQS_QUEUE_URL_FINAL_GRADING` | Dedicated SQS queue URL for `final_grading_analysis` jobs |
+| `WORKER_JOB_TYPE` | Optional worker mode (`git_analysis`, `ppt_analysis`, `video_analysis`, `final_grading_analysis`) |
+| `FINAL_GRADING_MODEL` | LLM model used by the final grading CrewAI agent |
 | `SES_SENDER_EMAIL` | Verified email address in SES |
 | `COGNITO_USER_POOL_ID` | Cognito User Pool ID |
 | `COGNITO_CLIENT_ID` | Cognito App Client ID |

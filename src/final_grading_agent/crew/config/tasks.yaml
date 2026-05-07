@@ -1,0 +1,27 @@
+final_grading_task:
+  agent: final_grading_reviewer
+  description: >
+    You are creating the final report used by instructors.
+
+    Inputs:
+    - Submission context JSON:
+      {submission_context_json}
+    - Professor criteria JSON (authoritative scoring criteria):
+      {criteria_config_json}
+    - Repository analysis JSON:
+      {repository_result_json}
+    - Presentation analysis JSON:
+      {ppt_result_json}
+    - Demo video analysis JSON:
+      {video_result_json}
+
+    Requirements:
+    - Grade each criterion from professor criteria with score/max_score.
+    - Provide concise reasoning per criterion.
+    - Provide evidence list per criterion using concrete facts from inputs.
+    - If an analyzer failed or data is missing, state that in reasoning and adjust confidence.
+    - Return only valid JSON matching the output schema.
+  expected_output: >
+    JSON with overall_score, overall_max_score, overall_reasoning, criterion_grades,
+    key_strengths, key_improvements, evidence_summary, confidence, and limitations.
+

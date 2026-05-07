@@ -33,6 +33,31 @@ async def test_get_file_content_uses_local_cache(workspace_tmp_path):
     assert calls["count"] == 1
 
 
+@pytest.mark.asyncio
+async def test_get_file_content_handles_binary_payload(workspace_tmp_path):
+    service = GitHubService(
+        api_base_url="https://api.github.com",
+        request_timeout_seconds=5,
+        cache_dir=workspace_tmp_path / "file_cache",
+    )
+
+    async def fake_request_json(method, path, params=None, not_found_error=None):
+        return {
+            "type": "file",
+            "encoding": "base64",
+            "content": "APkA",  # Includes non-UTF8 bytes when decoded.
+            "size": 3,
+        }
+
+    service._request_json = fake_request_json  # type: ignore[method-assign]
+
+    document = await service.get_file_content("octocat", "Hello-World", "main", "fonts/agustina.otf")
+
+    assert isinstance(document, DocumentationFile)
+    assert document.path == "fonts/agustina.otf"
+    assert document.content == ""
+
+
 def test_get_file_preview_supports_start_line_and_cache(workspace_tmp_path):
     service = GitHubService(
         api_base_url="https://api.github.com",
