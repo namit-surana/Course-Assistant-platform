@@ -46,6 +46,7 @@ interface StarButtonProps {
   borderWidth?: number;
   className?: string;
   onClick?: () => void;
+  disabled?: boolean;
 }
 
 export function StarButton({
@@ -86,10 +87,11 @@ export function StarButton({
 
   return (
     <button
+      type="button"
       ref={buttonRef}
       style={{ isolation: "isolate" } as CSSProperties}
       className={cn(
-        "relative z-[3] overflow-hidden h-10 px-4 py-2 inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-3xl text-sm font-medium transition-colors disabled:pointer-events-none disabled:opacity-50",
+        "relative z-[3] overflow-hidden h-10 px-4 py-2 inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-3xl text-sm font-medium transition-colors cursor-pointer disabled:pointer-events-none disabled:opacity-50",
         className,
       )}
       {...props}
@@ -105,11 +107,11 @@ export function StarButton({
       />
 
       {/* Center mask — covers interior so only the border edge shows the glow */}
-      <div className="absolute inset-[2px] rounded-[inherit] bg-background z-[2]" />
+      <div className="absolute inset-[2px] rounded-[inherit] bg-background z-[2] pointer-events-none" />
 
       {/* Star pattern border overlay */}
       <div
-        className="absolute inset-0 z-[4] overflow-hidden rounded-[inherit] dark:border-white/15 border-black/10 dark:text-black text-white"
+        className="absolute inset-0 z-[4] overflow-hidden rounded-[inherit] dark:border-white/15 border-black/10 dark:text-black text-white pointer-events-none"
         style={{ borderWidth: `${borderWidth}px`, borderStyle: "solid" }}
         aria-hidden="true"
       >

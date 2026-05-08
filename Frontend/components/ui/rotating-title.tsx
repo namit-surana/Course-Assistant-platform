@@ -1,7 +1,6 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { motion } from "framer-motion";
 
 interface RotatingTitleProps {
   words: string[];
@@ -15,33 +14,27 @@ export function RotatingTitle({
   className = "",
 }: RotatingTitleProps) {
   const [titleNumber, setTitleNumber] = useState(0);
-  const titles = useMemo(() => words, [words]);
+  const titles = useMemo(() => words.filter(Boolean), [words]);
 
   useEffect(() => {
-    const timeoutId = window.setTimeout(() => {
-      setTitleNumber((current) => (current === titles.length - 1 ? 0 : current + 1));
+    if (titles.length <= 1) return;
+
+    const timer = window.setInterval(() => {
+      setTitleNumber((current) => (current + 1) % titles.length);
     }, intervalMs);
 
-    return () => window.clearTimeout(timeoutId);
-  }, [intervalMs, titleNumber, titles]);
+    return () => window.clearInterval(timer);
+  }, [intervalMs, titles.length]);
+
+  if (titles.length === 0) {
+    return null;
+  }
 
   return (
-    <span className={`relative flex min-h-[1.15em] items-center overflow-hidden ${className}`}>
-      {titles.map((title, index) => (
-        <motion.span
-          key={title}
-          className="absolute font-semibold"
-          initial={{ opacity: 0, y: -80 }}
-          animate={
-            titleNumber === index
-              ? { opacity: 1, y: 0 }
-              : { opacity: 0, y: titleNumber > index ? -120 : 120 }
-          }
-          transition={{ type: "spring", stiffness: 55, damping: 15 }}
-        >
-          {title}
-        </motion.span>
-      ))}
+    <span className={`inline-flex min-h-[1.15em] items-center ${className}`}>
+      <span key={`${titles[titleNumber]}-${titleNumber}`} className="font-semibold">
+        {titles[titleNumber]}
+      </span>
     </span>
   );
 }
