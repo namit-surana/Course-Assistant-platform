@@ -3,8 +3,9 @@ from __future__ import annotations
 import asyncio
 import logging
 from pathlib import PurePosixPath
+from typing import Awaitable, Callable
 
-from src.api_ui.models.schemas import AnalysisRunState
+from src.api_ui.models.schemas import AnalysisRunState, RunKind, RunPhaseState
 from src.api_ui.services.run_store import AnalysisRunStore, RunNotFoundError, RunProgressReporter
 from src.github_agent.phase1.models.schemas import AnalyzeRequest, AnalyzeResponse
 from src.github_agent.phase1.services.context_builder import ContextBuilder
@@ -35,6 +36,7 @@ class AnalysisRunService:
         context_builder: ContextBuilder,
         tree_analysis_service: TreeAnalysisService,
         repository_analysis_service: RepositoryAnalysisService,
+        on_finish: Callable[[AnalysisRunState], Awaitable[None]] | None = None,
     ) -> AnalysisRunState:
         run = self.store.create_run(request)
         reporter = RunProgressReporter(self.store, run.id)
@@ -47,6 +49,7 @@ class AnalysisRunService:
                 context_builder=context_builder,
                 tree_analysis_service=tree_analysis_service,
                 repository_analysis_service=repository_analysis_service,
+                on_finish=on_finish,
             )
         )
         self._background_tasks[run.id] = task
@@ -55,6 +58,45 @@ class AnalysisRunService:
 
     def get_run(self, run_id: str) -> AnalysisRunState:
         return self.store.get_run(run_id)
+
+    async def start_simple_run(
+        self,
+        *,
+        kind: RunKind,
+        phases: list[RunPhaseState],
+        runner: Callable[[RunProgressReporter], Awaitable[dict]],
+        request=None,
+        label: str | None = None,
+        on_finish: Callable[[AnalysisRunState], Awaitable[None]] | None = None,
+    ) -> AnalysisRunState:
+        """Start a generic in-process run (used by PPT and video pipelines).
+
+        ``runner`` is responsible for invoking ``reporter.start_subtask`` /
+        ``complete_subtask`` for each step in ``phases`` and returning the
+        final raw_result dict that is stored on the run state.
+        """
+        run = self.store.create_run(request, phases=phases, kind=kind, label=label)
+        reporter = RunProgressReporter(self.store, run.id)
+
+        async def background() -> None:
+            try:
+                reporter.start()
+                result = await runner(reporter)
+                self.store.complete_run_simple(run.id, result)
+            except Exception as exc:  # noqa: BLE001
+                logger.exception("Simple run %s failed", run.id)
+                reporter.fail_run(str(exc))
+            finally:
+                if on_finish is not None:
+                    try:
+                        await on_finish(self.store.get_run(run.id))
+                    except Exception:  # noqa: BLE001
+                        logger.exception("on_finish hook failed for run %s", run.id)
+
+        task = asyncio.create_task(background())
+        self._background_tasks[run.id] = task
+        task.add_done_callback(lambda _: self._background_tasks.pop(run.id, None))
+        return self.store.get_run(run.id)
 
     async def run_inline(
         self,
@@ -86,6 +128,7 @@ class AnalysisRunService:
         context_builder: ContextBuilder,
         tree_analysis_service: TreeAnalysisService,
         repository_analysis_service: RepositoryAnalysisService,
+        on_finish: Callable[[AnalysisRunState], Awaitable[None]] | None = None,
     ) -> None:
         try:
             reporter.start()
@@ -106,6 +149,13 @@ class AnalysisRunService:
             reporter.complete_run(result, markdown_content)
         except Exception as exc:  # noqa: BLE001
             reporter.fail_run(str(exc))
+        finally:
+            if on_finish is not None:
+                try:
+                    final_state = self.store.get_run(reporter.run_id)
+                    await on_finish(final_state)
+                except Exception:  # noqa: BLE001
+                    logger.exception("on_finish hook failed for run %s", reporter.run_id)
 
     async def _execute_pipeline(
         self,

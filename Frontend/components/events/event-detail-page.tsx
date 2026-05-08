@@ -14,10 +14,16 @@ import {
   Trash2,
   Share2,
   Copy,
+  GitBranch,
+  FileText,
+  ChevronRight,
+  CheckCircle2,
+  Clock3,
+  Loader2,
+  XCircle,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useEventsStore } from "@/lib/events-store";
-import { SubmissionCard } from "./submission-card";
 import { AddSubmissionModal } from "./add-submission-modal";
 import type { Submission } from "@/lib/types";
 
@@ -109,7 +115,7 @@ export function EventDetailPage({ eventId }: { eventId: string }) {
   const failed = submissions.filter((s) => s.run.status === "failed").length;
 
   function openSubmission(sub: Submission) {
-    router.push(`/events/${eventId}/submissions/${sub.id}`);
+    router.push(`/events/${eventId}/submissions/${sub.id}?demo=1`);
   }
 
   async function handleDeleteEvent() {
@@ -216,7 +222,7 @@ export function EventDetailPage({ eventId }: { eventId: string }) {
         </button>
       </motion.nav>
 
-      <div className="px-4 py-6 sm:px-8 max-w-xl">
+      <div className="w-full px-4 py-6 sm:px-8">
         <motion.div
           initial={{ opacity: 0, y: 8 }}
           animate={{ opacity: 1, y: 0 }}
@@ -261,21 +267,89 @@ export function EventDetailPage({ eventId }: { eventId: string }) {
             </button>
           </motion.div>
         ) : (
-          <div className="space-y-2">
-            {submissions.map((sub, i) => (
-              <motion.div
-                key={sub.id}
-                initial={{ opacity: 0, y: 8 }}
-                animate={{ opacity: 1, y: 0 }}
-                transition={{ delay: i * 0.04 }}
-              >
-                <SubmissionCard
-                  submission={sub}
-                  eventId={eventId}
-                  onClick={() => openSubmission(sub)}
-                />
-              </motion.div>
-            ))}
+          <div className="max-w-full overflow-x-auto rounded-xl border border-neutral-800 bg-neutral-900/40">
+            <table className="w-full min-w-[940px] table-fixed border-collapse">
+              <colgroup>
+                <col style={{ width: "34%" }} />
+                <col style={{ width: "18%" }} />
+                <col style={{ width: "20%" }} />
+                <col style={{ width: "14%" }} />
+                <col style={{ width: "14%" }} />
+              </colgroup>
+              <thead>
+                <tr className="border-b border-neutral-800 bg-neutral-900/80">
+                  <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-neutral-400">
+                    Team
+                  </th>
+                  <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-neutral-400">
+                    Artifacts
+                  </th>
+                  <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-neutral-400">
+                    Pipeline Status
+                  </th>
+                  <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-neutral-400">
+                    Final Score
+                  </th>
+                  <th className="px-4 py-3 text-right text-xs font-semibold uppercase tracking-wide text-neutral-400">
+                    Actions
+                  </th>
+                </tr>
+              </thead>
+              <tbody>
+                {submissions.map((sub, i) => (
+                  <motion.tr
+                    key={sub.id}
+                    initial={{ opacity: 0, y: 8 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    transition={{ delay: i * 0.04 }}
+                    className={cn(
+                      "border-b border-neutral-800/70 last:border-b-0 hover:bg-neutral-800/40 cursor-pointer transition-colors",
+                      i % 2 === 0 ? "bg-neutral-900/20" : "bg-neutral-900/40"
+                    )}
+                    onClick={() => openSubmission(sub)}
+                  >
+                    <td className="px-4 py-3.5">
+                      <div className="min-w-0">
+                        <p className="truncate text-sm font-semibold text-white">
+                          {sub.teamName}
+                        </p>
+                        <p className="mt-0.5 truncate text-xs text-neutral-500">
+                          {sub.repoUrl ? shortRepo(sub.repoUrl) : "No repository URL"}
+                        </p>
+                      </div>
+                    </td>
+                    <td className="px-4 py-3.5">
+                      <ArtifactsPills submission={sub} />
+                    </td>
+                    <td className="px-4 py-3.5">
+                      <PipelineStatusPill status={sub.run.status} />
+                    </td>
+                    <td className="px-4 py-3.5">
+                      {sub.finalOverallScore !== undefined && sub.finalOverallMaxScore !== undefined ? (
+                        <span className="text-sm font-semibold text-emerald-300">
+                          {sub.finalOverallScore}/{sub.finalOverallMaxScore}
+                        </span>
+                      ) : (
+                        <span className="text-sm text-neutral-500">Pending</span>
+                      )}
+                    </td>
+                    <td className="px-4 py-3.5 text-right">
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          openSubmission(sub);
+                        }}
+                        className="inline-flex items-center gap-1.5 rounded-md border border-neutral-700 px-3 py-1.5 text-xs font-medium text-neutral-200 hover:border-violet-500/60 hover:text-white"
+                      >
+                        View
+                        <ChevronRight className="h-3.5 w-3.5" />
+                      </button>
+                    </td>
+                  </motion.tr>
+                ))}
+              </tbody>
+            </table>
           </div>
         )}
       </div>
@@ -286,6 +360,81 @@ export function EventDetailPage({ eventId }: { eventId: string }) {
         onClose={() => setModalOpen(false)}
       />
     </div>
+  );
+}
+
+function shortRepo(url: string) {
+  return url.replace(/^https?:\/\/(www\.)?github\.com\//, "");
+}
+
+function YouTubeGlyph({ className }: { className?: string }) {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      fill="currentColor"
+      aria-hidden="true"
+      className={className}
+    >
+      <path d="M23.5 6.2a3 3 0 0 0-2.1-2.1C19.6 3.5 12 3.5 12 3.5s-7.6 0-9.4.6A3 3 0 0 0 .5 6.2 31 31 0 0 0 0 12a31 31 0 0 0 .5 5.8 3 3 0 0 0 2.1 2.1c1.8.6 9.4.6 9.4.6s7.6 0 9.4-.6a3 3 0 0 0 2.1-2.1A31 31 0 0 0 24 12a31 31 0 0 0-.5-5.8ZM9.8 15.6V8.4l6.2 3.6-6.2 3.6Z" />
+    </svg>
+  );
+}
+
+function ArtifactsPills({ submission }: { submission: Submission }) {
+  const hasRepo = Boolean(submission.repoUrl?.trim());
+  const hasPpt = Boolean(submission.pptFileName);
+  const hasVideo = Boolean(submission.videoFileName || submission.videoObjectKey);
+
+  return (
+    <div className="flex items-center gap-2">
+      <span
+        className={cn("inline-flex items-center rounded-md border px-1.5 py-1", hasRepo ? "border-neutral-600 text-neutral-200" : "border-neutral-800 text-neutral-700")}
+        title={hasRepo ? "Repository uploaded" : "Repository missing"}
+      >
+        <GitBranch className="h-3.5 w-3.5" />
+      </span>
+      <span
+        className={cn("inline-flex items-center rounded-md border px-1.5 py-1", hasPpt ? "border-neutral-600 text-neutral-200" : "border-neutral-800 text-neutral-700")}
+        title={hasPpt ? "Presentation uploaded" : "Presentation missing"}
+      >
+        <FileText className="h-3.5 w-3.5" />
+      </span>
+      <span
+        className={cn("inline-flex items-center rounded-md border px-1.5 py-1", hasVideo ? "border-red-500/40 text-red-400" : "border-neutral-800 text-neutral-700")}
+        title={hasVideo ? "Demo video uploaded" : "Demo video missing"}
+      >
+        <YouTubeGlyph className="h-3.5 w-3.5" />
+      </span>
+    </div>
+  );
+}
+
+function PipelineStatusPill({ status }: { status: Submission["run"]["status"] }) {
+  if (status === "completed") {
+    return (
+      <span className="inline-flex items-center gap-1 rounded-full bg-emerald-500/15 px-2.5 py-1 text-xs font-medium text-emerald-300">
+        <CheckCircle2 className="h-3 w-3" /> Completed
+      </span>
+    );
+  }
+  if (status === "running" || status === "queued") {
+    return (
+      <span className="inline-flex items-center gap-1 rounded-full bg-violet-500/15 px-2.5 py-1 text-xs font-medium text-violet-300">
+        <Loader2 className="h-3 w-3 animate-spin" /> Analyzing
+      </span>
+    );
+  }
+  if (status === "submitted") {
+    return (
+      <span className="inline-flex items-center gap-1 rounded-full bg-neutral-800 px-2.5 py-1 text-xs font-medium text-neutral-400">
+        <Clock3 className="h-3 w-3" /> Submitted
+      </span>
+    );
+  }
+  return (
+    <span className="inline-flex items-center gap-1 rounded-full bg-red-500/15 px-2.5 py-1 text-xs font-medium text-red-300">
+      <XCircle className="h-3 w-3" /> Failed
+    </span>
   );
 }
 

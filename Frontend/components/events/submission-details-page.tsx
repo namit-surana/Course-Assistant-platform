@@ -1,7 +1,7 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
-import { useRouter } from "next/navigation";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 import {
   ArrowLeft,
   ExternalLink,
@@ -10,6 +10,7 @@ import {
   Loader2,
   MonitorPlay,
   Paperclip,
+  X,
 } from "lucide-react";
 
 import { cn } from "@/lib/utils";
@@ -22,6 +23,7 @@ import {
   startWorkerSubmissionVideoAnalysis,
 } from "@/lib/backend-submissions";
 import { ResultsPanel } from "@/components/analyze/results-panel";
+import { GitAnalysisProgress } from "@/components/events/git-analysis-progress";
 import {
   labelForDemoCriterion,
   labelForPptCriterion,
@@ -104,13 +106,6 @@ function tabBadge(kind: "ok" | "running" | "missing" | "failed") {
   return <span className="ml-2 h-1.5 w-1.5 rounded-full bg-neutral-600" />;
 }
 
-function scoreTone(value: number | null) {
-  if (value === null) return "text-muted-foreground";
-  if (value >= 4) return "text-emerald-300";
-  if (value >= 2.5) return "text-amber-300";
-  return "text-red-300";
-}
-
 function average(values: number[]) {
   if (values.length === 0) return null;
   return values.reduce((sum, value) => sum + value, 0) / values.length;
@@ -124,11 +119,25 @@ export function SubmissionDetailsPage({
   submissionId: string;
 }) {
   const router = useRouter();
+  const searchParams = useSearchParams();
+  const isDemoView = searchParams.get("demo") === "1";
   const [detail, setDetail] = useState<WorkerSubmissionDetail | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [starting, setStarting] = useState(false);
   const [startingFinal, setStartingFinal] = useState(false);
+  const [gitRunId, setGitRunId] = useState<string | null>(null);
+  const [pptRunId, setPptRunId] = useState<string | null>(null);
+  const [videoRunId, setVideoRunId] = useState<string | null>(null);
+  const [finalRunId, setFinalRunId] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<TabId>("repository");
+  const [showDeepAnalysis, setShowDeepAnalysis] = useState(false);
+  const [showStatusPanel, setShowStatusPanel] = useState(false);
+  const [isLiveDemoRunning, setIsLiveDemoRunning] = useState(false);
+  const [liveDemoStep, setLiveDemoStep] = useState(0);
+  const [liveDemoFeed, setLiveDemoFeed] = useState<string[]>([]);
+  const [liveDemoElapsedSeconds, setLiveDemoElapsedSeconds] = useState(0);
+  const liveDemoTimersRef = useRef<number[]>([]);
+  const hasAutoStartedDemoRef = useRef(false);
 
   async function refresh() {
     try {
@@ -172,6 +181,12 @@ export function SubmissionDetailsPage({
   const finalGradingStatus = detail?.feedback?.raw_result?.final_grading_status?.status;
   const finalGradingError = detail?.feedback?.raw_result?.final_grading_status?.error;
 
+  useEffect(() => {
+    if (detail?.feedback?.raw_result?.final_grading) {
+      setFinalRunId(null);
+    }
+  }, [detail?.feedback?.raw_result?.final_grading]);
+
   const defaultTab = useMemo<TabId>(() => {
     const hasVideo = Boolean(video && !video.skipped && !video.error);
     const hasPpt = Boolean(ppt && !ppt.skipped && !ppt.error);
@@ -184,6 +199,10 @@ export function SubmissionDetailsPage({
   useEffect(() => {
     setActiveTab(defaultTab);
   }, [defaultTab]);
+
+  useEffect(() => {
+    hasAutoStartedDemoRef.current = false;
+  }, [submissionId]);
 
   async function startProcessing() {
     if (!detail) return;
@@ -200,21 +219,39 @@ export function SubmissionDetailsPage({
       if (detail.repo_url) {
         startTasks.push({
           label: "repository",
-          start: () => startWorkerSubmissionGitAnalysis({ submissionId: detail.id }),
+          start: async () => {
+            const result = await startWorkerSubmissionGitAnalysis({ submissionId: detail.id });
+            if (result.run_id) {
+              setGitRunId(result.run_id);
+            }
+            return result;
+          },
         });
       }
 
       if (detail.artifacts.some((artifact) => artifact.kind === "ppt")) {
         startTasks.push({
           label: "presentation",
-          start: () => startWorkerSubmissionPptAnalysis({ submissionId: detail.id }),
+          start: async () => {
+            const result = await startWorkerSubmissionPptAnalysis({ submissionId: detail.id });
+            if (result.run_id) {
+              setPptRunId(result.run_id);
+            }
+            return result;
+          },
         });
       }
 
       if (detail.artifacts.some((artifact) => artifact.kind === "video")) {
         startTasks.push({
           label: "video",
-          start: () => startWorkerSubmissionVideoAnalysis({ submissionId: detail.id }),
+          start: async () => {
+            const result = await startWorkerSubmissionVideoAnalysis({ submissionId: detail.id });
+            if (result.run_id) {
+              setVideoRunId(result.run_id);
+            }
+            return result;
+          },
         });
       }
 
@@ -249,13 +286,74 @@ export function SubmissionDetailsPage({
     setStartingFinal(true);
     setError(null);
     try {
-      await startWorkerSubmissionFinalGrading({ submissionId: detail.id });
+      const started = await startWorkerSubmissionFinalGrading({ submissionId: detail.id });
+      if (started.run_id) {
+        setFinalRunId(started.run_id);
+      }
       await refresh();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Unable to start final grading.");
     } finally {
       setStartingFinal(false);
     }
+  }
+
+  function clearLiveDemoTimers() {
+    for (const timer of liveDemoTimersRef.current) {
+      window.clearTimeout(timer);
+    }
+    liveDemoTimersRef.current = [];
+  }
+
+  function pushLiveDemoEvent(message: string, step: number) {
+    setLiveDemoFeed((prev) => [...prev, message]);
+    setLiveDemoStep(step);
+  }
+
+  function startLiveDemoReplay() {
+    if (!detail) return;
+    clearLiveDemoTimers();
+    setIsLiveDemoRunning(true);
+    setLiveDemoStep(0);
+    setLiveDemoFeed([]);
+    setLiveDemoElapsedSeconds(0);
+    setShowDeepAnalysis(true);
+
+    const baseEvents: Array<{ at: number; message: string; step: number }> = [
+      { at: 1500, message: "Queued for analysis...", step: 0 },
+      { at: 7000, message: "Repository analysis started", step: 1 },
+      { at: 16500, message: "Repository analysis completed", step: 2 },
+      { at: 23000, message: "Presentation analysis started", step: 3 },
+      { at: 32000, message: "Presentation analysis completed", step: 4 },
+      { at: 39000, message: "Demo video analysis started", step: 5 },
+      { at: 48500, message: "Demo video analysis completed", step: 6 },
+      { at: 56000, message: "Final grading started", step: 7 },
+      { at: 66000, message: "Final score generated", step: 8 },
+    ];
+
+    for (const event of baseEvents) {
+      const timer = window.setTimeout(() => {
+        pushLiveDemoEvent(event.message, event.step);
+      }, event.at);
+      liveDemoTimersRef.current.push(timer);
+    }
+
+    const criteriaCount = finalReport?.criterion_grades?.length ?? 0;
+    const criteriaBaseDelay = 68000;
+    for (let index = 0; index < criteriaCount; index += 1) {
+      const timer = window.setTimeout(() => {
+        const criterionName = finalReport?.criterion_grades?.[index]?.criterion ?? `criterion ${index + 1}`;
+        pushLiveDemoEvent(`Final criterion streamed: ${criterionName}`, 9 + index);
+      }, criteriaBaseDelay + index * 1800);
+      liveDemoTimersRef.current.push(timer);
+    }
+
+    const doneDelay = criteriaBaseDelay + criteriaCount * 1800 + 2500;
+    const doneTimer = window.setTimeout(() => {
+      setLiveDemoFeed((prev) => [...prev, "Replay complete"]);
+      setIsLiveDemoRunning(false);
+    }, doneDelay);
+    liveDemoTimersRef.current.push(doneTimer);
   }
 
   const repoTabState: "ok" | "running" | "missing" | "failed" =
@@ -302,8 +400,73 @@ export function SubmissionDetailsPage({
         .filter((value) => Number.isFinite(value)),
     ) ?? null;
 
+  const showRepoStreamData = !isLiveDemoRunning || liveDemoStep >= 2;
+  const showPptStreamData = !isLiveDemoRunning || liveDemoStep >= 4;
+  const showVideoStreamData = !isLiveDemoRunning || liveDemoStep >= 6;
+  const showFinalScore = !isLiveDemoRunning || liveDemoStep >= 8;
   const finalScore = finalReport?.overall_score ?? null;
   const finalMaxScore = finalReport?.overall_max_score ?? null;
+  const finalScoreLabel =
+    showFinalScore && finalScore !== null && finalMaxScore !== null
+      ? `${finalScore.toFixed(1)}/${finalMaxScore.toFixed(1)}`
+      : "Pending";
+  const streamedCriterionCount = isLiveDemoRunning ? Math.max(0, liveDemoStep - 8) : undefined;
+  const visibleCriterionRows = finalReport?.criterion_grades
+    ? finalReport.criterion_grades.slice(
+        0,
+        streamedCriterionCount === undefined
+          ? finalReport.criterion_grades.length
+          : Math.min(streamedCriterionCount, finalReport.criterion_grades.length),
+      )
+    : [];
+  const liveFeedTotalSteps = 5;
+  const liveFeedCurrentStep =
+    liveDemoStep >= 7 ? 5 : liveDemoStep >= 5 ? 4 : liveDemoStep >= 3 ? 3 : liveDemoStep >= 1 ? 2 : 1;
+  const liveFeedHeaderState = isLiveDemoRunning
+    ? `Running • Step ${liveFeedCurrentStep}/${liveFeedTotalSteps} • ${Math.floor(
+        liveDemoElapsedSeconds / 60,
+      )
+        .toString()
+        .padStart(2, "0")}:${(liveDemoElapsedSeconds % 60).toString().padStart(2, "0")} elapsed`
+    : liveDemoFeed.length > 0
+      ? "Completed"
+      : "Idle";
+
+  const liveFeedPhases: Array<{
+    label: string;
+    detail: string;
+    state: "waiting" | "running" | "done";
+  }> = [
+    {
+      label: "Queued",
+      detail: "Queued for analysis...",
+      state: liveDemoFeed.length > 0 || liveDemoStep >= 1 ? "done" : isLiveDemoRunning ? "running" : "waiting",
+    },
+    {
+      label: "Repository analysis",
+      detail: "Repository analysis started",
+      state: liveDemoStep >= 2 ? "done" : liveDemoStep >= 1 && isLiveDemoRunning ? "running" : "waiting",
+    },
+    {
+      label: "Presentation analysis",
+      detail: "Presentation analysis started",
+      state: liveDemoStep >= 4 ? "done" : liveDemoStep >= 3 && isLiveDemoRunning ? "running" : "waiting",
+    },
+    {
+      label: "Demo video analysis",
+      detail: "Demo video analysis started",
+      state: liveDemoStep >= 6 ? "done" : liveDemoStep >= 5 && isLiveDemoRunning ? "running" : "waiting",
+    },
+    {
+      label: "Final grading",
+      detail: "Final grading started",
+      state: liveDemoStep >= 8 ? "done" : liveDemoStep >= 7 && isLiveDemoRunning ? "running" : "waiting",
+    },
+  ];
+  const currentLiveMessage = liveDemoFeed[liveDemoFeed.length - 1] ?? "Waiting for next update...";
+
+  const showRealActionButtons = true;
+  const showLiveDemoButton = false;
 
   const canStartProcessing =
     !starting &&
@@ -311,12 +474,40 @@ export function SubmissionDetailsPage({
     displayStatus !== "queued" &&
     displayStatus !== "running";
   const finalJobRunning = finalGradingStatus === "queued" || finalGradingStatus === "running";
+  const showFinalGradingSkeleton =
+    !finalReport && !finalGradingError && (finalJobRunning || Boolean(finalRunId));
   const canRunFinalNow =
     !startingFinal &&
+    !finalRunId &&
     Boolean(detail) &&
     !finalJobRunning &&
     displayStatus !== "queued" &&
     displayStatus !== "running";
+
+  useEffect(() => {
+    return () => {
+      clearLiveDemoTimers();
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  useEffect(() => {
+    if (!isLiveDemoRunning) return;
+    const timer = window.setInterval(() => {
+      setLiveDemoElapsedSeconds((prev) => prev + 1);
+    }, 1000);
+    return () => window.clearInterval(timer);
+  }, [isLiveDemoRunning]);
+
+  // Demo replay auto-start is intentionally disabled so the real in-process
+  // git-analysis progress (via /runs/{id}) drives the UI. Re-enable by
+  // restoring the effect below if you need the canned replay again.
+  // useEffect(() => {
+  //   if (!isDemoView || !detail) return;
+  //   if (hasAutoStartedDemoRef.current) return;
+  //   hasAutoStartedDemoRef.current = true;
+  //   startLiveDemoReplay();
+  // }, [isDemoView, detail]);
 
   return (
     <div className="min-h-screen bg-background">
@@ -344,7 +535,9 @@ export function SubmissionDetailsPage({
                   {detail?.team_name ?? "Submission"}
                 </h1>
                 {displayStatus ? statusPill(displayStatus) : null}
-                {finalGradingStatus ? statusPill(finalGradingStatus as RunStatus) : null}
+                {finalGradingStatus && finalGradingStatus !== displayStatus
+                  ? statusPill(finalGradingStatus as RunStatus)
+                  : null}
               </div>
 
               <div className="mt-0.5 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-neutral-500">
@@ -367,35 +560,69 @@ export function SubmissionDetailsPage({
               </div>
             </div>
 
+            {showRealActionButtons ? (
+              <button
+                type="button"
+                onClick={() => void startProcessing()}
+                disabled={!canStartProcessing}
+                className={cn(
+                  "inline-flex items-center gap-2 rounded-xl px-4 py-2 text-xs font-semibold text-white transition-all",
+                  "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-400/60 focus-visible:ring-offset-2 focus-visible:ring-offset-background",
+                  canStartProcessing
+                    ? "bg-emerald-600 shadow-sm shadow-emerald-900/30 hover:-translate-y-0.5 hover:bg-emerald-500"
+                    : "cursor-not-allowed bg-emerald-700/40 text-emerald-100/70",
+                )}
+              >
+                {starting ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : null}
+                {starting ? "Starting analyses..." : "Start Analysis"}
+              </button>
+            ) : null}
+            {showRealActionButtons ? (
+              <button
+                type="button"
+                onClick={() => void startFinalGrading()}
+                disabled={!canRunFinalNow}
+                className={cn(
+                  "inline-flex items-center gap-2 rounded-xl px-4 py-2 text-xs font-semibold text-white transition-all",
+                  canRunFinalNow
+                    ? "bg-violet-600 shadow-sm shadow-violet-900/30 hover:-translate-y-0.5 hover:bg-violet-500"
+                    : "cursor-not-allowed bg-violet-700/40 text-violet-100/70",
+                )}
+              >
+                {startingFinal ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : null}
+                {startingFinal ? "Starting final grading..." : "Run Final Grade Now"}
+              </button>
+            ) : null}
             <button
               type="button"
-              onClick={() => void startProcessing()}
-              disabled={!canStartProcessing}
-              className={cn(
-                "inline-flex items-center gap-2 rounded-xl px-4 py-2 text-xs font-semibold text-white transition-all",
-                "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-400/60 focus-visible:ring-offset-2 focus-visible:ring-offset-background",
-                canStartProcessing
-                  ? "bg-emerald-600 shadow-sm shadow-emerald-900/30 hover:-translate-y-0.5 hover:bg-emerald-500"
-                  : "cursor-not-allowed bg-emerald-700/40 text-emerald-100/70",
-              )}
+              onClick={() => setShowDeepAnalysis(true)}
+              className="inline-flex items-center gap-2 rounded-xl border border-neutral-700 bg-neutral-900/80 px-4 py-2 text-xs font-semibold text-neutral-100 transition-all hover:-translate-y-0.5 hover:border-violet-500/60 hover:text-white"
             >
-              {starting ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : null}
-              {starting ? "Starting analyses..." : "Start Analysis"}
+              View Deep Analysis
             </button>
             <button
               type="button"
-              onClick={() => void startFinalGrading()}
-              disabled={!canRunFinalNow}
-              className={cn(
-                "inline-flex items-center gap-2 rounded-xl px-4 py-2 text-xs font-semibold text-white transition-all",
-                canRunFinalNow
-                  ? "bg-violet-600 shadow-sm shadow-violet-900/30 hover:-translate-y-0.5 hover:bg-violet-500"
-                  : "cursor-not-allowed bg-violet-700/40 text-violet-100/70",
-              )}
+              onClick={() => setShowStatusPanel(true)}
+              className="inline-flex items-center gap-2 rounded-xl border border-neutral-700 bg-neutral-900/80 px-4 py-2 text-xs font-semibold text-neutral-100 transition-all hover:-translate-y-0.5 hover:border-neutral-500/80 hover:text-white"
             >
-              {startingFinal ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : null}
-              {startingFinal ? "Starting final grading..." : "Run Final Grade Now"}
+              Status
             </button>
+            {showLiveDemoButton ? (
+              <button
+                type="button"
+                onClick={() => startLiveDemoReplay()}
+                disabled={!detail || isLiveDemoRunning}
+                className={cn(
+                  "inline-flex items-center gap-2 rounded-xl border px-4 py-2 text-xs font-semibold transition-all",
+                  !detail || isLiveDemoRunning
+                    ? "cursor-not-allowed border-cyan-700/40 bg-cyan-900/20 text-cyan-200/60"
+                    : "border-cyan-500/40 bg-cyan-500/15 text-cyan-100 hover:-translate-y-0.5 hover:border-cyan-400/70 hover:text-white",
+                )}
+              >
+                {isLiveDemoRunning ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : null}
+                {isLiveDemoRunning ? "Streaming Replay..." : "Live Demo"}
+              </button>
+            ) : null}
           </div>
 
           {error ? <p className="mt-2 text-xs text-red-400">{error}</p> : null}
@@ -410,100 +637,138 @@ export function SubmissionDetailsPage({
           </div>
         ) : (
           <>
-            <section className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
-              <ResultSummaryCard
-                title="PPT Feedback"
-                description={
-                  ppt?.error
-                    ? ppt.error
-                    : ppt?.skipped
-                      ? ppt.reason ?? "Presentation analysis was skipped."
-                      : ppt?.ppt_summary ?? "No presentation analysis yet."
-                }
-                value={pptScore !== null ? `${pptScore.toFixed(1)}/5` : "Pending"}
-                valueClassName={scoreTone(pptScore)}
-              />
-
-              <ResultSummaryCard
-                title="Repository Feedback"
-                description={
-                  repoError ??
-                  (repoAnalysis?.executive_summary ??
-                    "Repository analysis summary will appear here.")
-                }
-                value={repoError ? "Failed" : repoAnalysis ? "Ready" : "Pending"}
-                valueClassName={
-                  repoError
-                    ? "text-red-300"
-                    : repoAnalysis
-                      ? "text-emerald-300"
-                      : "text-muted-foreground"
-                }
-              />
-
-              <ResultSummaryCard
-                title="Demo Feedback"
-                description={
-                  video?.error
-                    ? video.error
-                    : video?.skipped
-                      ? video.reason ?? "Demo analysis was skipped."
-                      : video?.parsed?.summary ?? "No demo analysis yet."
-                }
-                value={demoScore !== null ? `${demoScore.toFixed(1)}/5` : "Pending"}
-                valueClassName={scoreTone(demoScore)}
-              />
-
-              <ResultSummaryCard
-                title="Final Grade Summary"
-                description={
-                  finalReport?.overall_reasoning ??
-                  detail.feedback?.summary ??
-                  "Final grade summary will be shown once processing is completed."
-                }
-                value={
-                  finalScore !== null && finalMaxScore !== null
-                    ? `${finalScore.toFixed(1)}/${finalMaxScore.toFixed(1)}`
-                    : "Pending"
-                }
-                valueClassName={scoreTone(finalScore)}
-              />
-            </section>
-
-            <section className="space-y-4 rounded-[1.75rem] border border-border/70 bg-card/70 p-6 md:p-7">
-              <h2 className="text-lg font-semibold text-white">Final grader report</h2>
+            <section className="space-y-4 rounded-[1.75rem] border border-neutral-700/70 bg-neutral-900/80 p-6 md:p-7">
+              <div className="flex flex-wrap items-start justify-between gap-3">
+                <h2 className="text-lg font-semibold text-white">Final grader report</h2>
+                <div className="rounded-xl border border-cyan-500/25 bg-cyan-500/10 px-3 py-2 text-right">
+                  <p className="text-[10px] font-semibold uppercase tracking-[0.2em] text-cyan-200/90">
+                    Final score
+                  </p>
+                  <p
+                    className={cn(
+                      "text-base font-semibold tabular-nums",
+                      finalScoreLabel === "Pending" ? "text-neutral-200" : "text-cyan-100",
+                    )}
+                  >
+                    {finalScoreLabel}
+                  </p>
+                </div>
+              </div>
+              {finalRunId ? (
+                <GitAnalysisProgress
+                  runId={finalRunId}
+                  collapsible
+                  collapseOnComplete
+                  onCompleted={() => {
+                    setFinalRunId(null);
+                    void refresh();
+                  }}
+                />
+              ) : null}
               {!finalReport ? (
-                <p className="text-sm text-muted-foreground">
-                  {finalGradingError
-                    ? `Final grading failed: ${finalGradingError}`
-                    : "Final grader output will appear once the final grading job completes."}
-                </p>
+                <>
+                  {finalGradingError ? (
+                    <p className="text-sm text-neutral-300">{`Final grading failed: ${finalGradingError}`}</p>
+                  ) : showFinalGradingSkeleton ? (
+                    <div className="space-y-4">
+                      <div className="space-y-2">
+                        <div className="h-3 w-2/3 animate-pulse rounded bg-neutral-700/70" />
+                        <div className="h-3 w-5/6 animate-pulse rounded bg-neutral-700/70" />
+                        <div className="h-3 w-3/4 animate-pulse rounded bg-neutral-700/70" />
+                      </div>
+                      <div className="overflow-auto rounded-xl border border-neutral-600/70">
+                        <table className="w-full min-w-[640px] border-collapse text-left text-[13px]">
+                          <thead>
+                            <tr className="border-b border-neutral-600/70 bg-violet-500/10">
+                              <th className="px-3 py-2.5 font-medium text-neutral-200">Criterion</th>
+                              <th className="px-3 py-2.5 font-medium text-neutral-200">Score</th>
+                              <th className="px-3 py-2.5 font-medium text-neutral-200">Reasoning</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {Array.from({ length: 5 }, (_, idx) => (
+                              <tr
+                                key={`final-skel-${idx}`}
+                                className={cn(
+                                  "border-b border-neutral-700/70 last:border-0",
+                                  idx % 2 === 0 ? "bg-neutral-900/30" : "bg-neutral-900/55",
+                                )}
+                              >
+                                <td className="px-3 py-2.5">
+                                  <div className="h-3 max-w-[200px] w-4/5 animate-pulse rounded bg-neutral-700/60" />
+                                </td>
+                                <td className="px-3 py-2.5">
+                                  <div className="h-3 w-16 animate-pulse rounded bg-neutral-700/60" />
+                                </td>
+                                <td className="px-3 py-2.5">
+                                  <div className="h-3 max-w-md w-full animate-pulse rounded bg-neutral-700/50" />
+                                </td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    </div>
+                  ) : (
+                    <p className="text-sm text-neutral-300">
+                      Final grader output will appear once the final grading job completes.
+                    </p>
+                  )}
+                </>
               ) : (
                 <>
-                  <p className="text-sm leading-7 text-foreground/90">{finalReport.overall_reasoning}</p>
+                  {showFinalScore ? (
+                    <p className="text-sm leading-7 text-neutral-100">{finalReport.overall_reasoning}</p>
+                  ) : (
+                    <div className="space-y-2">
+                      <div className="h-3 w-2/3 animate-pulse rounded bg-neutral-700/70" />
+                      <div className="h-3 w-5/6 animate-pulse rounded bg-neutral-700/70" />
+                      <div className="h-3 w-3/4 animate-pulse rounded bg-neutral-700/70" />
+                    </div>
+                  )}
                   {finalReport.criterion_grades && finalReport.criterion_grades.length > 0 ? (
-                    <div className="overflow-auto rounded-xl border border-border/70">
-                      <table className="w-full min-w-[640px] border-collapse text-left text-[12px]">
+                    <div className="overflow-auto rounded-xl border border-neutral-600/70">
+                      <table className="w-full min-w-[640px] border-collapse text-left text-[13px]">
                         <thead>
-                          <tr className="border-b border-border/70 bg-card/70">
-                            <th className="px-3 py-2 font-medium text-muted-foreground">Criterion</th>
-                            <th className="px-3 py-2 font-medium text-muted-foreground">Score</th>
-                            <th className="px-3 py-2 font-medium text-muted-foreground">Reasoning</th>
+                          <tr className="border-b border-neutral-600/70 bg-violet-500/10">
+                            <th className="px-3 py-2.5 font-medium text-neutral-200">Criterion</th>
+                            <th className="px-3 py-2.5 font-medium text-neutral-200">Score</th>
+                            <th className="px-3 py-2.5 font-medium text-neutral-200">Reasoning</th>
                           </tr>
                         </thead>
                         <tbody>
-                          {finalReport.criterion_grades.map((row, idx) => (
+                          {visibleCriterionRows.map((row, idx) => (
                             <tr
                               key={`${row.criterion}-${idx}`}
-                              className="border-b border-border/50 last:border-0"
+                              className={cn(
+                                "border-b border-neutral-700/70 last:border-0 hover:bg-violet-500/10 transition-colors",
+                                idx % 2 === 0 ? "bg-neutral-900/30" : "bg-neutral-900/55"
+                              )}
                             >
-                              <td className="px-3 py-2 text-foreground/90">{row.criterion}</td>
-                              <td className="px-3 py-2 text-foreground/90 tabular-nums">
+                              <td className="px-3 py-2.5 text-neutral-100">{row.criterion}</td>
+                              <td
+                                className={cn(
+                                  "px-3 py-2.5 tabular-nums font-semibold",
+                                  row.max_score > 0 && row.score / row.max_score >= 0.75
+                                    ? "text-emerald-300"
+                                    : row.max_score > 0 && row.score / row.max_score >= 0.4
+                                      ? "text-amber-300"
+                                      : "text-red-300"
+                                )}
+                              >
                                 {row.score}/{row.max_score}
                               </td>
-                              <td className="px-3 py-2 text-muted-foreground">{row.reasoning}</td>
+                              <td className="px-3 py-2.5 text-neutral-300 leading-6">{row.reasoning}</td>
                             </tr>
                           ))}
+                          {isLiveDemoRunning &&
+                          finalReport.criterion_grades.length > visibleCriterionRows.length ? (
+                            <tr className="border-b border-neutral-700/70 bg-neutral-900/40">
+                              <td className="px-3 py-2.5 text-neutral-400">Streaming next criterion…</td>
+                              <td className="px-3 py-2.5 text-neutral-400 tabular-nums">—</td>
+                              <td className="px-3 py-2.5 text-neutral-500">Waiting for next step</td>
+                            </tr>
+                          ) : null}
                         </tbody>
                       </table>
                     </div>
@@ -512,237 +777,404 @@ export function SubmissionDetailsPage({
               )}
             </section>
 
-            <div className="flex flex-wrap gap-2">
-              <TabButton
-                active={activeTab === "repository"}
-                onClick={() => setActiveTab("repository")}
-                icon={<GitBranch className="h-4 w-4" />}
+            {showDeepAnalysis ? (
+              <div
+                className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4 backdrop-blur-sm sm:p-6"
+                onClick={() => setShowDeepAnalysis(false)}
               >
-                Repository {tabBadge(repoTabState)}
-              </TabButton>
-
-              <TabButton
-                active={activeTab === "presentation"}
-                onClick={() => setActiveTab("presentation")}
-                icon={<FileText className="h-4 w-4" />}
-              >
-                Presentation {tabBadge(pptTabState)}
-              </TabButton>
-
-              <TabButton
-                active={activeTab === "demo"}
-                onClick={() => setActiveTab("demo")}
-                icon={<MonitorPlay className="h-4 w-4" />}
-              >
-                Demo video {tabBadge(videoTabState)}
-              </TabButton>
-
-              <TabButton
-                active={activeTab === "artifacts"}
-                onClick={() => setActiveTab("artifacts")}
-                icon={<Paperclip className="h-4 w-4" />}
-              >
-                Artifacts
-              </TabButton>
-            </div>
-
-            {activeTab === "repository" ? (
-              repoError ? (
-                <section className="rounded-[1.75rem] border border-red-500/20 bg-red-500/5 p-6">
-                  <h2 className="text-lg font-semibold text-red-100">
-                    Repository analysis failed
-                  </h2>
-                  <p className="mt-2 text-sm leading-7 text-red-200/80">
-                    {repoError}
-                  </p>
-                </section>
-              ) : (
-                <ResultsPanel analysis={repoAnalysis} hideHeader />
-              )
-            ) : null}
-
-            {activeTab === "presentation" ? (
-              <section className="space-y-4 rounded-[1.75rem] border border-border/70 bg-card/70 p-6 md:p-7">
-                <h2 className="text-lg font-semibold text-white">Presentation</h2>
-
-                {!ppt ? (
-                  <p className="text-sm text-muted-foreground">No presentation analysis yet.</p>
-                ) : ppt.error ? (
-                  <p className="text-sm text-red-400">{ppt.error}</p>
-                ) : ppt.skipped ? (
-                  <p className="text-sm text-muted-foreground">
-                    {ppt.reason ?? "Presentation analysis skipped."}
-                  </p>
-                ) : (
-                  <>
-                    {ppt.ppt_summary ? (
-                      <div className="rounded-2xl border border-border/70 bg-background/30 p-5">
-                        <p className="text-xs font-semibold uppercase tracking-[0.22em] text-blue-400">
-                          Summary
-                        </p>
-                        <p className="mt-2 whitespace-pre-wrap text-sm leading-7 text-foreground/90">
-                          {ppt.ppt_summary}
-                        </p>
-                      </div>
-                    ) : null}
-
-                    {ppt.criteria_scores && ppt.criteria_scores.length > 0 ? (
-                      <div className="rounded-2xl border border-border/70 bg-background/30 p-5">
-                        <p className="text-xs font-semibold uppercase tracking-[0.22em] text-blue-400">
-                          Rubric
-                        </p>
-                        <div className="mt-3 overflow-auto rounded-xl border border-border/70">
-                          <table className="w-full min-w-[520px] border-collapse text-left text-[12px]">
-                            <thead>
-                              <tr className="border-b border-border/70 bg-card/70">
-                                <th className="px-3 py-2 font-medium text-muted-foreground">Criterion</th>
-                                <th className="px-3 py-2 font-medium text-muted-foreground">Score (0–5)</th>
-                                <th className="px-3 py-2 font-medium text-muted-foreground">Comment</th>
-                              </tr>
-                            </thead>
-                            <tbody>
-                              {ppt.criteria_scores.map((row, idx) => {
-                                const meta = labelForPptCriterion(row.category);
-                                const label = meta?.label ?? row.category;
-
-                                return (
-                                  <tr
-                                    key={`${row.category}-${idx}`}
-                                    className="border-b border-border/50 last:border-0"
-                                  >
-                                    <td className="px-3 py-2 text-foreground/90">
-                                      <div className="font-medium text-foreground/90">{label}</div>
-                                    </td>
-                                    <td className="px-3 py-2 text-foreground/90 tabular-nums">
-                                      {normalizePptScore(row.score)}
-                                    </td>
-                                    <td className="px-3 py-2 text-muted-foreground">
-                                      {row.comment ?? ""}
-                                    </td>
-                                  </tr>
-                                );
-                              })}
-                            </tbody>
-                          </table>
-                        </div>
-                      </div>
-                    ) : null}
-                  </>
-                )}
-              </section>
-            ) : null}
-
-            {activeTab === "demo" ? (
-              <section className="space-y-4 rounded-[1.75rem] border border-border/70 bg-card/70 p-6 md:p-7">
-                <h2 className="text-lg font-semibold text-white">Demo video</h2>
-
-                {!video ? (
-                  <p className="text-sm text-muted-foreground">No demo video analysis yet.</p>
-                ) : video.error ? (
-                  <p className="text-sm text-red-400">{video.error}</p>
-                ) : video.skipped ? (
-                  <p className="text-sm text-muted-foreground">
-                    {video.reason ?? "Demo analysis skipped."}
-                  </p>
-                ) : (
-                  <>
-                    {video.parsed?.summary ? (
-                      <div className="rounded-2xl border border-border/70 bg-background/30 p-5">
-                        <p className="text-xs font-semibold uppercase tracking-[0.22em] text-blue-400">
-                          Summary
-                        </p>
-                        <p className="mt-2 whitespace-pre-wrap text-sm leading-7 text-foreground/90">
-                          {video.parsed.summary}
-                        </p>
-                      </div>
-                    ) : null}
-
-                    {video.parsed?.limitations ? (
-                      <p className="text-sm text-muted-foreground">
-                        <span className="font-semibold text-foreground/90">Limitations:</span>{" "}
-                        {video.parsed.limitations}
-                      </p>
-                    ) : null}
-
-                    {video.parsed?.rubric && video.parsed.rubric.length > 0 ? (
-                      <div className="rounded-2xl border border-border/70 bg-background/30 p-5">
-                        <p className="text-xs font-semibold uppercase tracking-[0.22em] text-blue-400">
-                          Rubric
-                        </p>
-                        <div className="mt-3 overflow-auto rounded-xl border border-border/70">
-                          <table className="w-full min-w-[640px] border-collapse text-left text-[12px]">
-                            <thead>
-                              <tr className="border-b border-border/70 bg-card/70">
-                                <th className="px-3 py-2 font-medium text-muted-foreground">Criterion</th>
-                                <th className="px-3 py-2 font-medium text-muted-foreground">Score (0–5)</th>
-                                <th className="px-3 py-2 font-medium text-muted-foreground">Evidence</th>
-                                <th className="px-3 py-2 font-medium text-muted-foreground">Time</th>
-                              </tr>
-                            </thead>
-                            <tbody>
-                              {video.parsed.rubric.map((row, idx) => {
-                                const meta = labelForDemoCriterion(row.id);
-                                const label = meta?.label ?? row.id ?? "";
-
-                                return (
-                                  <tr
-                                    key={`${row.id ?? "row"}-${idx}`}
-                                    className="border-b border-border/50 last:border-0"
-                                  >
-                                    <td className="px-3 py-2 text-foreground/90">
-                                      <div className="font-medium text-foreground/90">{label}</div>
-                                    </td>
-                                    <td className="px-3 py-2 text-foreground/90 tabular-nums">
-                                      {normalizeDemoScore(row.score)}
-                                    </td>
-                                    <td className="px-3 py-2 text-muted-foreground">
-                                      {row.evidence ?? ""}
-                                    </td>
-                                    <td className="px-3 py-2 text-muted-foreground">
-                                      {row.timestamps ?? ""}
-                                    </td>
-                                  </tr>
-                                );
-                              })}
-                            </tbody>
-                          </table>
-                        </div>
-                      </div>
-                    ) : null}
-                  </>
-                )}
-              </section>
-            ) : null}
-
-            {activeTab === "artifacts" ? (
-              <section className="space-y-4 rounded-[1.75rem] border border-border/70 bg-card/70 p-6 md:p-7">
-                <h2 className="text-lg font-semibold text-white">Artifacts</h2>
-
-                {detail.artifacts.length === 0 ? (
-                  <p className="text-sm text-muted-foreground">No artifacts uploaded.</p>
-                ) : (
-                  <div className="space-y-2">
-                    {detail.artifacts.map((a) => (
-                      <div
-                        key={a.id}
-                        className="rounded-2xl border border-border/70 bg-background/30 px-4 py-3"
-                      >
-                        <div className="flex flex-wrap items-center justify-between gap-2">
-                          <p className="text-sm font-medium text-foreground/90">
-                            {a.file_name ?? a.object_key}
-                          </p>
-                          <span className="rounded-full bg-neutral-800 px-2 py-0.5 text-[11px] font-semibold text-neutral-300">
-                            {a.kind}
-                          </span>
-                        </div>
-                        <p className="mt-1 text-xs text-muted-foreground">
-                          Status: {a.status}
-                        </p>
-                      </div>
-                    ))}
+                <div
+                  className="h-[88vh] w-full max-w-5xl overflow-y-auto rounded-2xl border border-neutral-700 bg-background p-5 shadow-2xl shadow-black/40 sm:p-6"
+                  onClick={(e) => e.stopPropagation()}
+                >
+                  <div className="mb-4 flex items-center justify-between">
+                    <h3 className="text-lg font-semibold text-white">Deep Analysis</h3>
+                    <button
+                      type="button"
+                      onClick={() => setShowDeepAnalysis(false)}
+                      className="inline-flex h-8 w-8 items-center justify-center rounded-md border border-neutral-700 text-neutral-300 hover:bg-neutral-800 hover:text-white"
+                    >
+                      <X className="h-4 w-4" />
+                    </button>
                   </div>
-                )}
-              </section>
+
+                  <div className="flex flex-wrap gap-2">
+                    <TabButton
+                      active={activeTab === "repository"}
+                      onClick={() => setActiveTab("repository")}
+                      icon={<GitBranch className="h-4 w-4" />}
+                    >
+                      Repository {tabBadge(repoTabState)}
+                    </TabButton>
+
+                    <TabButton
+                      active={activeTab === "presentation"}
+                      onClick={() => setActiveTab("presentation")}
+                      icon={<FileText className="h-4 w-4" />}
+                    >
+                      Presentation {tabBadge(pptTabState)}
+                    </TabButton>
+
+                    <TabButton
+                      active={activeTab === "demo"}
+                      onClick={() => setActiveTab("demo")}
+                      icon={<MonitorPlay className="h-4 w-4" />}
+                    >
+                      Demo video {tabBadge(videoTabState)}
+                    </TabButton>
+
+                    <TabButton
+                      active={activeTab === "artifacts"}
+                      onClick={() => setActiveTab("artifacts")}
+                      icon={<Paperclip className="h-4 w-4" />}
+                    >
+                      Artifacts
+                    </TabButton>
+                  </div>
+
+                  <div className="mt-4 space-y-4 pb-6">
+                    {activeTab === "repository" && gitRunId && !repoAnalysis ? (
+                      <GitAnalysisProgress
+                        runId={gitRunId}
+                        collapsible
+                        onCompleted={() => {
+                          void refresh();
+                        }}
+                      />
+                    ) : null}
+
+                    {activeTab === "repository" ? (
+                      isLiveDemoRunning && !showRepoStreamData ? (
+                        <section className="rounded-[1.75rem] border border-neutral-700/70 bg-neutral-900/80 p-6 md:p-7">
+                          <h2 className="text-lg font-semibold text-white">Repository</h2>
+                          <p className="mt-2 text-sm text-neutral-300">Streaming repository analysis…</p>
+                          <div className="mt-4 space-y-2">
+                            <div className="h-3 w-2/3 animate-pulse rounded bg-neutral-700/70" />
+                            <div className="h-3 w-full animate-pulse rounded bg-neutral-700/70" />
+                            <div className="h-3 w-5/6 animate-pulse rounded bg-neutral-700/70" />
+                            <div className="h-3 w-3/4 animate-pulse rounded bg-neutral-700/70" />
+                          </div>
+                        </section>
+                      ) : repoError ? (
+                        <section className="rounded-[1.75rem] border border-red-500/20 bg-red-500/5 p-6">
+                          <h2 className="text-lg font-semibold text-red-100">
+                            Repository analysis failed
+                          </h2>
+                          <p className="mt-2 text-sm leading-7 text-red-200/80">
+                            {repoError}
+                          </p>
+                        </section>
+                      ) : (
+                        <ResultsPanel analysis={repoAnalysis} hideHeader />
+                      )
+                    ) : null}
+
+                    {activeTab === "presentation" && pptRunId && !ppt ? (
+                      <GitAnalysisProgress
+                        runId={pptRunId}
+                        collapsible
+                        onCompleted={() => {
+                          void refresh();
+                        }}
+                      />
+                    ) : null}
+
+                    {activeTab === "presentation" ? (
+                      <section className="space-y-4 rounded-[1.75rem] border border-neutral-700/70 bg-neutral-900/80 p-6 md:p-7">
+                        <h2 className="text-lg font-semibold text-white">Presentation</h2>
+
+                        {isLiveDemoRunning && !showPptStreamData ? (
+                          <div className="space-y-3">
+                            <p className="text-sm text-neutral-300">Streaming presentation analysis…</p>
+                            <div className="space-y-2">
+                              <div className="h-3 w-2/3 animate-pulse rounded bg-neutral-700/70" />
+                              <div className="h-3 w-full animate-pulse rounded bg-neutral-700/70" />
+                              <div className="h-3 w-5/6 animate-pulse rounded bg-neutral-700/70" />
+                            </div>
+                          </div>
+                        ) : !ppt ? (
+                          <p className="text-sm text-muted-foreground">No presentation analysis yet.</p>
+                        ) : ppt.error ? (
+                          <p className="text-sm text-red-400">{ppt.error}</p>
+                        ) : ppt.skipped ? (
+                          <p className="text-sm text-muted-foreground">
+                            {ppt.reason ?? "Presentation analysis skipped."}
+                          </p>
+                        ) : (
+                          <>
+                            {ppt.ppt_summary ? (
+                              <div className="rounded-xl bg-neutral-900/40 p-4">
+                                <p className="text-xs font-semibold uppercase tracking-[0.22em] text-blue-400">
+                                  Summary
+                                </p>
+                                <p className="mt-2 whitespace-pre-wrap text-sm leading-7 text-neutral-100">
+                                  {ppt.ppt_summary}
+                                </p>
+                              </div>
+                            ) : null}
+
+                            {ppt.criteria_scores && ppt.criteria_scores.length > 0 ? (
+                              <div className="rounded-xl bg-neutral-900/40 p-4">
+                                <p className="text-xs font-semibold uppercase tracking-[0.22em] text-blue-400">
+                                  Rubric
+                                </p>
+                                <div className="mt-3 overflow-auto rounded-xl">
+                                  <table className="w-full min-w-[520px] border-collapse text-left text-[13px]">
+                                    <thead>
+                                      <tr className="border-b border-neutral-700/70 bg-neutral-900/95">
+                                        <th className="px-3 py-2.5 font-medium text-neutral-300">Criterion</th>
+                                        <th className="px-3 py-2.5 font-medium text-neutral-300">Score (0–5)</th>
+                                        <th className="px-3 py-2.5 font-medium text-neutral-300">Comment</th>
+                                      </tr>
+                                    </thead>
+                                    <tbody>
+                                      {ppt.criteria_scores.map((row, idx) => {
+                                        const meta = labelForPptCriterion(row.category);
+                                        const label = meta?.label ?? row.category;
+
+                                        return (
+                                          <tr
+                                            key={`${row.category}-${idx}`}
+                                            className={cn(
+                                              "border-b border-neutral-700/60 last:border-0",
+                                              idx % 2 === 0 ? "bg-neutral-900/30" : "bg-neutral-900/50"
+                                            )}
+                                          >
+                                            <td className="px-3 py-2.5 text-neutral-100">
+                                              <div className="font-medium text-neutral-100">{label}</div>
+                                            </td>
+                                            <td className="px-3 py-2.5 tabular-nums text-neutral-100">
+                                              {normalizePptScore(row.score)}
+                                            </td>
+                                            <td className="px-3 py-2.5 text-neutral-300 leading-6">
+                                              {row.comment ?? ""}
+                                            </td>
+                                          </tr>
+                                        );
+                                      })}
+                                    </tbody>
+                                  </table>
+                                </div>
+                              </div>
+                            ) : null}
+                          </>
+                        )}
+                      </section>
+                    ) : null}
+
+                    {activeTab === "demo" && videoRunId && !video ? (
+                      <GitAnalysisProgress
+                        runId={videoRunId}
+                        collapsible
+                        onCompleted={() => {
+                          void refresh();
+                        }}
+                      />
+                    ) : null}
+
+                    {activeTab === "demo" ? (
+                      <section className="space-y-4 rounded-[1.75rem] border border-neutral-700/70 bg-neutral-900/80 p-6 md:p-7">
+                        <h2 className="text-lg font-semibold text-white">Demo video</h2>
+
+                        {isLiveDemoRunning && !showVideoStreamData ? (
+                          <div className="space-y-3">
+                            <p className="text-sm text-neutral-300">Streaming demo video analysis…</p>
+                            <div className="space-y-2">
+                              <div className="h-3 w-2/3 animate-pulse rounded bg-neutral-700/70" />
+                              <div className="h-3 w-full animate-pulse rounded bg-neutral-700/70" />
+                              <div className="h-3 w-5/6 animate-pulse rounded bg-neutral-700/70" />
+                            </div>
+                          </div>
+                        ) : !video ? (
+                          <p className="text-sm text-muted-foreground">No demo video analysis yet.</p>
+                        ) : video.error ? (
+                          <p className="text-sm text-red-400">{video.error}</p>
+                        ) : video.skipped ? (
+                          <p className="text-sm text-muted-foreground">
+                            {video.reason ?? "Demo analysis skipped."}
+                          </p>
+                        ) : (
+                          <>
+                            {video.parsed?.summary ? (
+                              <div className="rounded-xl bg-neutral-900/40 p-4">
+                                <p className="text-xs font-semibold uppercase tracking-[0.22em] text-blue-400">
+                                  Summary
+                                </p>
+                                <p className="mt-2 whitespace-pre-wrap text-sm leading-7 text-neutral-100">
+                                  {video.parsed.summary}
+                                </p>
+                              </div>
+                            ) : null}
+
+                            {video.parsed?.limitations ? (
+                              <p className="text-sm text-neutral-300">
+                                <span className="font-semibold text-neutral-100">Limitations:</span>{" "}
+                                {video.parsed.limitations}
+                              </p>
+                            ) : null}
+
+                            {video.parsed?.rubric && video.parsed.rubric.length > 0 ? (
+                              <div className="rounded-xl bg-neutral-900/40 p-4">
+                                <p className="text-xs font-semibold uppercase tracking-[0.22em] text-blue-400">
+                                  Rubric
+                                </p>
+                                <div className="mt-3 overflow-auto rounded-xl">
+                                  <table className="w-full min-w-[640px] border-collapse text-left text-[13px]">
+                                    <thead>
+                                      <tr className="border-b border-neutral-700/70 bg-neutral-900/95">
+                                        <th className="px-3 py-2.5 font-medium text-neutral-300">Criterion</th>
+                                        <th className="px-3 py-2.5 font-medium text-neutral-300">Score (0–5)</th>
+                                        <th className="px-3 py-2.5 font-medium text-neutral-300">Evidence</th>
+                                        <th className="px-3 py-2.5 font-medium text-neutral-300">Time</th>
+                                      </tr>
+                                    </thead>
+                                    <tbody>
+                                      {video.parsed.rubric.map((row, idx) => {
+                                        const meta = labelForDemoCriterion(row.id);
+                                        const label = meta?.label ?? row.id ?? "";
+
+                                        return (
+                                          <tr
+                                            key={`${row.id ?? "row"}-${idx}`}
+                                            className={cn(
+                                              "border-b border-neutral-700/60 last:border-0",
+                                              idx % 2 === 0 ? "bg-neutral-900/30" : "bg-neutral-900/50"
+                                            )}
+                                          >
+                                            <td className="px-3 py-2.5 text-neutral-100">
+                                              <div className="font-medium text-neutral-100">{label}</div>
+                                            </td>
+                                            <td className="px-3 py-2.5 tabular-nums text-neutral-100">
+                                              {normalizeDemoScore(row.score)}
+                                            </td>
+                                            <td className="px-3 py-2.5 text-neutral-300 leading-6">
+                                              {row.evidence ?? ""}
+                                            </td>
+                                            <td className="px-3 py-2.5 text-neutral-300">
+                                              {row.timestamps ?? ""}
+                                            </td>
+                                          </tr>
+                                        );
+                                      })}
+                                    </tbody>
+                                  </table>
+                                </div>
+                              </div>
+                            ) : null}
+                          </>
+                        )}
+                      </section>
+                    ) : null}
+
+                    {activeTab === "artifacts" ? (
+                      <section className="space-y-4 rounded-[1.75rem] border border-neutral-700/70 bg-neutral-900/80 p-6 md:p-7">
+                        <h2 className="text-lg font-semibold text-white">Artifacts</h2>
+
+                        {detail.artifacts.length === 0 ? (
+                          <p className="text-sm text-muted-foreground">No artifacts uploaded.</p>
+                        ) : (
+                          <div className="space-y-2">
+                            {detail.artifacts.map((a) => (
+                              <div key={a.id} className="rounded-xl bg-neutral-900/40 px-4 py-3">
+                                <div className="flex flex-wrap items-center justify-between gap-2">
+                                  <p className="text-sm font-medium text-neutral-100">
+                                    {a.file_name ?? a.object_key}
+                                  </p>
+                                  <span className="rounded-full bg-neutral-800 px-2 py-0.5 text-[11px] font-semibold text-neutral-300">
+                                    {a.kind}
+                                  </span>
+                                </div>
+                                <p className="mt-1 text-xs text-neutral-300">
+                                  Status: {a.status}
+                                </p>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </section>
+                    ) : null}
+                  </div>
+                </div>
+              </div>
+            ) : null}
+            {showStatusPanel ? (
+              <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm" onClick={() => setShowStatusPanel(false)}>
+                <aside
+                  className="absolute right-0 top-0 h-full w-full max-w-md border-l border-neutral-800 bg-neutral-950 shadow-2xl"
+                  onClick={(e) => e.stopPropagation()}
+                >
+                  <div className="flex h-full flex-col">
+                    <div className="flex items-center justify-between border-b border-neutral-800 px-4 py-3">
+                      <div>
+                        <h3 className="text-sm font-semibold text-white">Live status</h3>
+                        <p className="mt-0.5 text-xs text-neutral-400">
+                          Real-time agent progress for this submission.
+                        </p>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => setShowStatusPanel(false)}
+                        className="inline-flex h-8 w-8 items-center justify-center rounded-md border border-neutral-700 text-neutral-300 hover:bg-neutral-800 hover:text-white"
+                      >
+                        <X className="h-4 w-4" />
+                      </button>
+                    </div>
+
+                    <div className="flex-1 space-y-4 overflow-y-auto p-4">
+                      {!gitRunId && !pptRunId && !videoRunId && !finalRunId ? (
+                        <div className="rounded-xl border border-neutral-800 bg-neutral-900/50 p-4 text-sm text-neutral-400">
+                          No active runs yet. Click <span className="text-neutral-200">Start Analysis</span> to
+                          begin — repository, presentation, and demo video progress will stream here in real time.
+                        </div>
+                      ) : null}
+
+                      {gitRunId ? (
+                        <GitAnalysisProgress
+                          runId={gitRunId}
+                          collapsible
+                          collapseOnComplete
+                          onCompleted={() => {
+                            void refresh();
+                          }}
+                        />
+                      ) : null}
+
+                      {pptRunId ? (
+                        <GitAnalysisProgress
+                          runId={pptRunId}
+                          collapsible
+                          collapseOnComplete
+                          onCompleted={() => {
+                            void refresh();
+                          }}
+                        />
+                      ) : null}
+
+                      {videoRunId ? (
+                        <GitAnalysisProgress
+                          runId={videoRunId}
+                          collapsible
+                          collapseOnComplete
+                          onCompleted={() => {
+                            void refresh();
+                          }}
+                        />
+                      ) : null}
+
+                      {finalRunId ? (
+                        <GitAnalysisProgress
+                          runId={finalRunId}
+                          collapsible
+                          collapseOnComplete
+                          onCompleted={() => {
+                            setFinalRunId(null);
+                            void refresh();
+                          }}
+                        />
+                      ) : null}
+                    </div>
+                  </div>
+                </aside>
+              </div>
             ) : null}
           </>
         )}
@@ -778,31 +1210,5 @@ function TabButton({
       </span>
       <span className="whitespace-nowrap">{children}</span>
     </button>
-  );
-}
-
-function ResultSummaryCard({
-  title,
-  description,
-  value,
-  valueClassName,
-}: {
-  title: string;
-  description: string;
-  value: string;
-  valueClassName?: string;
-}) {
-  return (
-    <article className="rounded-2xl border border-border/70 bg-card/70 p-4 shadow-md shadow-black/10">
-      <p className="text-xs font-semibold uppercase tracking-[0.2em] text-muted-foreground">
-        {title}
-      </p>
-      <p className={cn("mt-2 text-2xl font-semibold tracking-tight", valueClassName)}>
-        {value}
-      </p>
-      <p className="mt-2 line-clamp-4 text-sm leading-6 text-muted-foreground">
-        {description}
-      </p>
-    </article>
   );
 }

@@ -25,7 +25,7 @@ def extract_json_object(text: str) -> dict[str, Any]:
 
 
 def generative_model_name(crew_or_litellm_model: str) -> str:
-    """Strip LiteLLM-style `gemini/` prefix for google.generativeai."""
+    """Strip LiteLLM-style `gemini/` prefix for Gemini SDK calls."""
     if "/" in crew_or_litellm_model:
         return crew_or_litellm_model.split("/", 1)[-1]
     return crew_or_litellm_model

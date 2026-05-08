@@ -19,7 +19,12 @@ class FinalGradingCrew:
     tasks_config = "config/tasks.yaml"
 
     def __init__(self, model: str, gemini_api_key: str | None) -> None:
-        self.model = model
+        # CrewAI uses LiteLLM under the hood; normalize gemini model names so
+        # env overrides like "gemini-2.5-flash" still map to the configured provider.
+        if isinstance(model, str) and model and "/" not in model and model.startswith("gemini-"):
+            self.model = f"gemini/{model}"
+        else:
+            self.model = model
         self.gemini_api_key = gemini_api_key
 
     @agent
@@ -46,6 +51,8 @@ class FinalGradingCrew:
             tasks=[self.final_grading_task()],
             process=Process.sequential,
             verbose=False,
+            # Tracing can trigger an interactive console prompt inside containers.
+            # We keep live UI streaming via CrewAI events without enabling tracing.
             tracing=False,
         )
 

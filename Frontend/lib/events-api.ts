@@ -21,6 +21,11 @@ interface BackendEvent {
   created_at: string;
 }
 
+function demoEventName(name: string): string {
+  const normalized = name.trim().toLowerCase().replace(/[\s_-]+/g, "");
+  return normalized === "evalme" ? "Cloud Computing Class" : name;
+}
+
 export interface CreateEventInput {
   name: string;
   type: EvalEvent["type"];
@@ -120,6 +125,7 @@ export async function fetchEventSubmissions(
     });
 
     const rawVideo = submission.feedback?.raw_result?.video;
+    const finalGrading = submission.feedback?.raw_result?.final_grading;
     const videoFromSubmission =
       rawVideo && (rawVideo.parsed || rawVideo.raw_output || rawVideo.error)
         ? {
@@ -152,6 +158,14 @@ export async function fetchEventSubmissions(
         ? videoFromSubmission.status
         : ("idle" as const),
       videoAnalysisResult: videoFromSubmission,
+      finalOverallScore:
+        typeof finalGrading?.overall_score === "number"
+          ? finalGrading.overall_score
+          : undefined,
+      finalOverallMaxScore:
+        typeof finalGrading?.overall_max_score === "number"
+          ? finalGrading.overall_max_score
+          : undefined,
       createdAt: submission.created_at,
     };
   });
@@ -160,7 +174,7 @@ export async function fetchEventSubmissions(
 function mapBackendEvent(event: BackendEvent): EvalEvent {
   return {
     id: event.id,
-    name: event.name,
+    name: demoEventName(event.name),
     type: event.type,
     status: event.status,
     studentSubmitUrl: event.student_submit_url,

@@ -11,6 +11,8 @@ import type {
   WorkerVideoAnalysisStartResponse,
 } from "./types";
 
+export type { AnalysisRunState } from "./types";
+
 const API_BASE_URL =
   process.env.NEXT_PUBLIC_API_BASE_URL?.replace(/\/$/, "") || "http://127.0.0.1:8000";
 
@@ -28,7 +30,19 @@ type SubmissionAnalysisStartApiResponse = {
   status: "queued" | "running" | "completed" | "failed";
   queued: boolean;
   sqs_message_id?: string | null;
+  run_id?: string | null;
 };
+
+export async function fetchRunState(runId: string): Promise<AnalysisRunState> {
+  const response = await fetch(`${API_BASE_URL}/api/v1/runs/${runId}`, {
+    cache: "no-store",
+  });
+  if (!response.ok) {
+    const failure = await response.json().catch(() => ({}));
+    throw new Error(failure.detail || "Unable to load run state.");
+  }
+  return (await response.json()) as AnalysisRunState;
+}
 
 export async function submitWorkerProject({
   teamName,

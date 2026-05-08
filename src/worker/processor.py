@@ -4,9 +4,10 @@ import asyncio
 import json
 import logging
 import tempfile
+from contextlib import AbstractContextManager, nullcontext
 from datetime import datetime, timezone
 from pathlib import Path, PurePosixPath
-from typing import Any
+from typing import Any, Callable
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session, selectinload
@@ -176,6 +177,9 @@ def _run_final_grading_analysis(
     session: Session,
     submission: Submission,
     settings: Settings,
+    *,
+    crew_context: AbstractContextManager[Any] | None = None,
+    on_context_ready: Callable[[], None] | None = None,
 ) -> dict[str, Any]:
     event = session.get(EvaluationEvent, submission.event_id) if submission.event_id else None
     criteria_config = event.criteria_config if event and event.criteria_config else {}
@@ -196,15 +200,19 @@ def _run_final_grading_analysis(
         ],
     }
 
-    final_report = run_final_grading(
-        model=settings.final_grading_model,
-        gemini_api_key=settings.GEMINI_API_KEY,
-        submission_context_json=json.dumps(submission_context, default=str),
-        criteria_config_json=json.dumps(normalized_criteria_config, default=str),
-        repository_result_json=json.dumps(component_results["repository"], default=str),
-        ppt_result_json=json.dumps(component_results["ppt"], default=str),
-        video_result_json=json.dumps(component_results["video"], default=str),
-    )
+    if on_context_ready is not None:
+        on_context_ready()
+    ctx = crew_context if crew_context is not None else nullcontext()
+    with ctx:
+        final_report = run_final_grading(
+            model=settings.final_grading_model,
+            gemini_api_key=settings.GEMINI_API_KEY,
+            submission_context_json=json.dumps(submission_context, default=str),
+            criteria_config_json=json.dumps(normalized_criteria_config, default=str),
+            repository_result_json=json.dumps(component_results["repository"], default=str),
+            ppt_result_json=json.dumps(component_results["ppt"], default=str),
+            video_result_json=json.dumps(component_results["video"], default=str),
+        )
     return final_report.model_dump(mode="json")
 
 

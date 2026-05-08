@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
+from typing import Callable
 
 from src.config.settings import Settings
 from src.video_agent.crew.demo_video_crew import DemoVideoAnalysisCrew
@@ -74,6 +75,9 @@ def run_demo_video_analysis(
     assignment_title: str,
     required_features: list[str] | None,
     settings: Settings,
+    on_uploaded: Callable[[], None] | None = None,
+    on_active: Callable[[], None] | None = None,
+    on_score_started: Callable[[], None] | None = None,
 ) -> tuple[str, dict]:
     if not settings.GEMINI_API_KEY:
         raise RuntimeError("GEMINI_API_KEY is not configured.")
@@ -86,6 +90,9 @@ def run_demo_video_analysis(
         model=settings.video_analysis_model,
         gemini_api_key=settings.GEMINI_API_KEY,
         analysis_prompt=prompt,
+        on_uploaded=on_uploaded,
+        on_active=on_active,
+        on_score_started=on_score_started,
     )
     crew = crew_driver.crew()
     task_instance = crew_driver.demo_video_analysis_task()

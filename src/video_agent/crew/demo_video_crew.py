@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Callable
 
 from pydantic import BaseModel, Field
 
@@ -25,10 +25,21 @@ class DemoVideoAnalysisCrew:
     agents_config = "config/agents.yaml"
     tasks_config = "config/tasks.yaml"
 
-    def __init__(self, model: str, gemini_api_key: str | None, analysis_prompt: str) -> None:
+    def __init__(
+        self,
+        model: str,
+        gemini_api_key: str | None,
+        analysis_prompt: str,
+        on_uploaded: Callable[[], None] | None = None,
+        on_active: Callable[[], None] | None = None,
+        on_score_started: Callable[[], None] | None = None,
+    ) -> None:
         self.model = model
         self.gemini_api_key = gemini_api_key
         self.analysis_prompt = analysis_prompt
+        self.on_uploaded = on_uploaded
+        self.on_active = on_active
+        self.on_score_started = on_score_started
 
     @agent
     def demo_video_analyst(self) -> Agent:
@@ -77,6 +88,9 @@ class DemoVideoAnalysisCrew:
                     prompt=outer.analysis_prompt,
                     model=settings.video_analysis_model,
                     api_key=api_key,
+                    on_uploaded=outer.on_uploaded,
+                    on_active=outer.on_active,
+                    on_score_started=outer.on_score_started,
                 )
                 return extract_json_object(raw)
 

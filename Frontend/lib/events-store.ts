@@ -109,14 +109,24 @@ export const useEventsStore = create<EventsStore>((set) => ({
   submissions: {},
 
   loadSubmissions: async (eventId) => {
-    const submissions = await fetchEventSubmissions(eventId);
+    try {
+      const submissions = await fetchEventSubmissions(eventId);
 
-    set((state) => ({
-      submissions: {
-        ...state.submissions,
-        [eventId]: submissions,
-      },
-    }));
+      set((state) => ({
+        submissions: {
+          ...state.submissions,
+          [eventId]: submissions,
+        },
+      }));
+    } catch (error) {
+      console.error("Unable to load submissions for event", eventId, error);
+      set((state) => ({
+        submissions: {
+          ...state.submissions,
+          [eventId]: state.submissions[eventId] ?? [],
+        },
+      }));
+    }
   },
 
   addSubmission: (eventId, submission) =>

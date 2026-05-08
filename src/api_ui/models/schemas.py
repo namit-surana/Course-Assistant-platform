@@ -11,6 +11,7 @@ from src.github_agent.phase1.models.schemas import AnalyzeRequest, AnalyzeRespon
 
 RunStatus = Literal["queued", "running", "completed", "failed"]
 ItemStatus = Literal["pending", "in-progress", "completed", "failed", "skipped"]
+RunKind = Literal["repo", "ppt", "video", "final"]
 RunEventKind = Literal[
     "info",
     "task-started",
@@ -58,7 +59,9 @@ class AnalysisRunState(BaseModel):
     id: str = Field(default_factory=lambda: str(uuid4()))
     revision: int = 0
     status: RunStatus = "queued"
-    request: AnalyzeRequest
+    kind: RunKind = "repo"
+    request: AnalyzeRequest | None = None
+    label: str | None = None
     owner: str | None = None
     repo: str | None = None
     branch: str | None = None
@@ -67,6 +70,7 @@ class AnalysisRunState(BaseModel):
     phases: list[RunPhaseState] = Field(default_factory=list)
     events: list[RunEventState] = Field(default_factory=list)
     result: AnalyzeResponse | None = None
+    result_simple: dict[str, object] | None = None
     markdown_report_content: str | None = None
     started_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
@@ -119,6 +123,102 @@ def build_default_run_phases() -> list[RunPhaseState]:
             subtasks=[
                 RunSubtaskState(id="save_repository_analysis", title="Save repository analysis", description="Persist repository_analysis.json."),
                 RunSubtaskState(id="save_markdown_report", title="Save markdown report", description="Persist repository_report.md."),
+            ],
+        ),
+    ]
+
+
+def build_ppt_run_phases() -> list[RunPhaseState]:
+    return [
+        RunPhaseState(
+            id="ppt",
+            title="Presentation Analysis",
+            description="Score the submitted slide deck against the rubric using Gemini.",
+            subtasks=[
+                RunSubtaskState(
+                    id="download",
+                    title="Download artifact from S3",
+                    description="Pull the PPT/PDF file from object storage.",
+                ),
+                RunSubtaskState(
+                    id="extract",
+                    title="Extract slide text",
+                    description="Read slide text via python-pptx / PyMuPDF (lazy via tool call).",
+                ),
+                RunSubtaskState(
+                    id="score",
+                    title="Score against rubric",
+                    description="CrewAI rubric analyst calls Gemini to evaluate each criterion.",
+                ),
+                RunSubtaskState(
+                    id="save",
+                    title="Save feedback",
+                    description="Persist criterion scores and summary to FeedbackReport.",
+                ),
+            ],
+        ),
+    ]
+
+
+def build_video_run_phases() -> list[RunPhaseState]:
+    return [
+        RunPhaseState(
+            id="video",
+            title="Demo Video Analysis",
+            description="Upload the demo video to Gemini and score against the rubric.",
+            subtasks=[
+                RunSubtaskState(
+                    id="download",
+                    title="Download artifact from S3",
+                    description="Pull the video file from object storage.",
+                ),
+                RunSubtaskState(
+                    id="upload_to_gemini",
+                    title="Upload to Gemini Files API",
+                    description="Send the video to Gemini multimodal storage.",
+                ),
+                RunSubtaskState(
+                    id="wait_active",
+                    title="Wait for Gemini to activate the file",
+                    description="Poll Gemini until the video is ready for inference.",
+                ),
+                RunSubtaskState(
+                    id="score",
+                    title="Score against rubric",
+                    description="Gemini watches the video and emits per-criterion scores.",
+                ),
+                RunSubtaskState(
+                    id="save",
+                    title="Save feedback",
+                    description="Persist parsed rubric output to FeedbackReport.",
+                ),
+            ],
+        ),
+    ]
+
+
+def build_final_grading_run_phases() -> list[RunPhaseState]:
+    return [
+        RunPhaseState(
+            id="final",
+            title="Final grading",
+            description="Merge component analyses into weighted final criterion scores.",
+            subtasks=[
+                RunSubtaskState(
+                    id="load_context",
+                    title="Load context",
+                    description="Read rubric criteria and latest repository, presentation, and video results.",
+                ),
+                RunSubtaskState(
+                    id="crew_review",
+                    title="CrewAI synthesis",
+                    description="Gemini-backed agent merges evidence and assigns final scores.",
+                ),
+                RunSubtaskState(
+                    id="save",
+                    title="Save to database",
+                    description="Persist the merged final report to FeedbackReport.",
+                ),
             ],
         ),
     ]

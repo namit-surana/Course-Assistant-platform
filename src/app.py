@@ -5,6 +5,7 @@ from fastapi import Depends, FastAPI, HTTPException, WebSocket
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import RedirectResponse
 
+from src.api_ui.router import router as runs_router
 from src.config.settings import Settings, get_settings
 from src.events.router import router as events_router
 from src.jobs.router import router as jobs_router
@@ -31,6 +32,7 @@ OPENAPI_TAGS = [
     {"name": "jobs", "description": "Unified async job status polling for worker-driven analysis."},
     {"name": "video-analysis", "description": "Video analysis job creation and polling endpoints."},
     {"name": "voice-agent", "description": "Live voice transcript streaming APIs."},
+    {"name": "runs", "description": "Live progress for in-process repository analysis runs."},
 ]
 
 app = FastAPI(
@@ -52,6 +54,7 @@ app.include_router(submissions_router, prefix="/api/v1")
 app.include_router(events_router, prefix="/api/v1")
 app.include_router(video_analysis_router, prefix="/api/v1")
 app.include_router(jobs_router, prefix="/api/v1")
+app.include_router(runs_router, prefix="/api/v1")
 
 
 def get_voice_realtime_bridge(

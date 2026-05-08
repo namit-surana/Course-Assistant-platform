@@ -1,14 +1,41 @@
 from __future__ import annotations
 
+import asyncio
+from typing import Any
+
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import select
 from sqlalchemy.orm import Session, selectinload
 
+from src.api_ui.dependencies import get_analysis_run_service, get_run_store
+from src.api_ui.models.schemas import (
+    AnalysisRunState,
+    build_final_grading_run_phases,
+    build_ppt_run_phases,
+    build_video_run_phases,
+)
+from src.api_ui.services.analysis_run_service import AnalysisRunService
+from src.api_ui.services.crewai_live_events import bind_crewai_run_context
+from src.api_ui.services.run_store import RunProgressReporter
 from src.aws.s3_service import S3StorageService, build_upload_object_key
 from src.aws.sqs_service import SqsQueueService
 from src.config.settings import Settings, get_settings
-from src.db.models import AnalysisJob, EvaluationEvent, FeedbackReport, Submission, SubmissionArtifact
-from src.db.session import get_db_session
+from src.db.models import AnalysisJob, EvaluationEvent, FeedbackReport, FeedbackScore, Submission, SubmissionArtifact
+from src.db.session import get_db_session, get_session_factory
+from src.github_agent.phase1.models.schemas import AnalyzeRequest
+from src.github_agent.phase1.services.context_builder import ContextBuilder
+from src.github_agent.phase1.services.filter_service import FilterService
+from src.github_agent.phase1.services.github_service import GitHubService
+from src.github_agent.phase2.services.tree_analysis_service import create_tree_analysis_service
+from src.github_agent.phase3.services.repository_analysis_service import create_repository_analysis_service
+from src.ppt_agent.core import builtin_ppt_rubric_by_category
+from src.ppt_agent.ppt_analyzer import analyze_ppt
+from src.video_agent.services.analysis_runner import run_demo_video_analysis
+from src.worker.processor import (
+    _refresh_submission_status,
+    _run_final_grading_analysis,
+    _save_feedback,
+)
 from src.submissions.schemas import (
     FeedbackReportResponse,
     FeedbackScoreResponse,
@@ -116,10 +143,12 @@ def start_submission_processing(
     "/{submission_id}/video-analysis/start",
     response_model=SubmissionArtifactAnalysisStartResponse,
 )
-def start_submission_video_analysis(
+async def start_submission_video_analysis(
     submission_id: str,
     session: Session = Depends(get_db_session),
     queue_publisher: SqsQueueService | None = Depends(get_queue_publisher),
+    settings: Settings = Depends(get_settings),
+    run_service: AnalysisRunService = Depends(get_analysis_run_service),
 ) -> SubmissionArtifactAnalysisStartResponse:
     submission = session.get(
         Submission,
@@ -132,34 +161,244 @@ def start_submission_video_analysis(
     if video_artifact is None:
         raise HTTPException(status_code=400, detail="No video artifact found for this submission.")
 
-    try:
-        created = create_submission_analysis_job(
-            session,
-            submission,
-            job_type="video_analysis",
-            queue_publisher=queue_publisher,
+    if not settings.video_analysis_inprocess:
+        try:
+            created = create_submission_analysis_job(
+                session,
+                submission,
+                job_type="video_analysis",
+                queue_publisher=queue_publisher,
+            )
+        except RuntimeError as exc:
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+        return SubmissionArtifactAnalysisStartResponse(
+            submission_id=submission.id,
+            job_id=created.analysis_job.id,
+            job_type=created.analysis_job.job_type,
+            status=created.analysis_job.status,
+            queued=created.queued,
+            sqs_message_id=created.analysis_job.sqs_message_id,
         )
-    except RuntimeError as exc:
-        raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+    job = AnalysisJob(
+        submission_id=submission.id,
+        job_type="video_analysis",
+        status="running",
+    )
+    submission.status = "running"
+    submission.error_message = None
+    session.add(job)
+    session.commit()
+    session.refresh(job)
+
+    artifact_object_key = video_artifact.object_key
+    artifact_file_name = video_artifact.file_name
+    job_id = job.id
+    submission_id_value = submission.id
+    label = artifact_file_name or "demo video"
+
+    async def runner(reporter: RunProgressReporter) -> dict:
+        return await _run_video_in_process(
+            reporter,
+            settings,
+            artifact_object_key=artifact_object_key,
+            artifact_file_name=artifact_file_name,
+        )
+
+    async def on_finish(final_state: AnalysisRunState) -> None:
+        await _persist_inprocess_video_run(submission_id_value, job_id, final_state)
+
+    run_state = await run_service.start_simple_run(
+        kind="video",
+        phases=build_video_run_phases(),
+        runner=runner,
+        label=label,
+        on_finish=on_finish,
+    )
 
     return SubmissionArtifactAnalysisStartResponse(
         submission_id=submission.id,
-        job_id=created.analysis_job.id,
-        job_type=created.analysis_job.job_type,
-        status=created.analysis_job.status,
-        queued=created.queued,
-        sqs_message_id=created.analysis_job.sqs_message_id,
+        job_id=job.id,
+        job_type="video_analysis",
+        status="running",
+        queued=False,
+        sqs_message_id=None,
+        run_id=run_state.id,
     )
+
+
+async def _run_video_in_process(
+    reporter: RunProgressReporter,
+    settings: Settings,
+    *,
+    artifact_object_key: str,
+    artifact_file_name: str | None,
+) -> dict:
+    import asyncio
+    import tempfile
+    from pathlib import Path
+
+    if not settings.s3_bucket_name:
+        raise RuntimeError("S3_BUCKET_NAME is not configured.")
+
+    suffix = Path(artifact_file_name or artifact_object_key).suffix or ".mp4"
+
+    reporter.start_subtask("video", "download", "Downloading video from S3")
+    storage = S3StorageService(settings)
+    tmp = tempfile.NamedTemporaryFile(delete=False, suffix=suffix)
+    tmp.close()
+
+    loop = asyncio.get_running_loop()
+
+    def _mark_uploaded() -> None:
+        try:
+            loop.call_soon_threadsafe(
+                lambda: reporter.complete_subtask(
+                    "video", "upload_to_gemini", "Video uploaded to Gemini"
+                )
+            )
+            loop.call_soon_threadsafe(
+                lambda: reporter.start_subtask(
+                    "video", "wait_active", "Waiting for Gemini to activate the video"
+                )
+            )
+        except Exception:  # noqa: BLE001
+            pass
+
+    def _mark_active() -> None:
+        try:
+            loop.call_soon_threadsafe(
+                lambda: reporter.complete_subtask(
+                    "video", "wait_active", "Gemini activated the video"
+                )
+            )
+        except Exception:  # noqa: BLE001
+            pass
+
+    def _mark_score_started() -> None:
+        try:
+            loop.call_soon_threadsafe(
+                lambda: reporter.start_subtask(
+                    "video", "score", "Gemini is watching the video and scoring"
+                )
+            )
+        except Exception:  # noqa: BLE001
+            pass
+
+    try:
+        await asyncio.to_thread(storage.download_file, artifact_object_key, tmp.name)
+        reporter.complete_subtask(
+            "video",
+            "download",
+            f"Downloaded {artifact_file_name or artifact_object_key}",
+        )
+
+        reporter.start_subtask("video", "upload_to_gemini", "Uploading video to Gemini Files API")
+        # Score subtask transitions are driven by the on_uploaded/on_active/on_score_started
+        # callbacks fired by gemini_video.analyze_video_file.
+        with bind_crewai_run_context(
+            reporter,
+            phase_id="video",
+            default_subtask_id="score",
+        ):
+            raw, parsed = await asyncio.to_thread(
+                run_demo_video_analysis,
+                Path(tmp.name),
+                "Course project demo",
+                [],
+                settings,
+                _mark_uploaded,
+                _mark_active,
+                _mark_score_started,
+            )
+        reporter.complete_subtask("video", "score", "Scoring completed")
+    finally:
+        try:
+            Path(tmp.name).unlink(missing_ok=True)
+        except Exception:  # noqa: BLE001
+            pass
+
+    reporter.start_subtask("video", "save", "Saving feedback to the submission")
+    return {"video": {"raw_output": raw, "parsed": parsed}}
+
+
+async def _persist_inprocess_video_run(
+    submission_id: str,
+    job_id: str,
+    final_state: AnalysisRunState,
+) -> None:
+    import asyncio
+    from datetime import datetime, timezone
+
+    def _write() -> None:
+        session_factory = get_session_factory()
+        with session_factory() as session:
+            job = session.get(AnalysisJob, job_id)
+            submission = session.get(
+                Submission,
+                submission_id,
+                options=[selectinload(Submission.feedback_report)],
+            )
+            if job is None or submission is None:
+                return
+
+            now = datetime.now(timezone.utc)
+            reporter = RunProgressReporter(get_run_store(), final_state.id)
+
+            if final_state.status == "completed" and final_state.result_simple is not None:
+                video_payload = (
+                    final_state.result_simple.get("video", {})
+                    if isinstance(final_state.result_simple, dict)
+                    else {}
+                )
+                raw_result = {"video": video_payload}
+
+                report = submission.feedback_report
+                if report is None:
+                    report = FeedbackReport(submission_id=submission.id, raw_result={})
+                    session.add(report)
+                    session.flush()
+                merged = dict(report.raw_result or {})
+                merged.update(raw_result)
+                report.raw_result = merged
+                summary = ((video_payload or {}).get("parsed") or {}).get("summary")
+                if summary:
+                    report.summary = summary
+                session.add(report)
+
+                job.status = "completed"
+                job.result_json = raw_result
+                job.completed_at = now
+                job.error_message = None
+                if submission.status != "failed":
+                    submission.status = "completed"
+                    submission.error_message = None
+                reporter.complete_subtask("video", "save", "Feedback saved to the submission")
+            else:
+                error_message = final_state.error or "Video analysis failed."
+                job.status = "failed"
+                job.error_message = error_message
+                job.result_json = {"error": error_message}
+                job.completed_at = now
+                submission.status = "failed"
+                submission.error_message = error_message
+
+            session.commit()
+
+    await asyncio.to_thread(_write)
 
 
 @router.post(
     "/{submission_id}/git-analysis/start",
     response_model=SubmissionArtifactAnalysisStartResponse,
 )
-def start_submission_git_analysis(
+async def start_submission_git_analysis(
     submission_id: str,
     session: Session = Depends(get_db_session),
     queue_publisher: SqsQueueService | None = Depends(get_queue_publisher),
+    settings: Settings = Depends(get_settings),
+    run_service: AnalysisRunService = Depends(get_analysis_run_service),
 ) -> SubmissionArtifactAnalysisStartResponse:
     submission = session.get(Submission, submission_id)
     if submission is None:
@@ -167,30 +406,147 @@ def start_submission_git_analysis(
     if not submission.repo_url:
         raise HTTPException(status_code=400, detail="No repository URL found for this submission.")
 
-    created = create_submission_analysis_job(
-        session,
-        submission,
+    if not settings.git_analysis_inprocess:
+        created = create_submission_analysis_job(
+            session,
+            submission,
+            job_type="git_analysis",
+            queue_publisher=queue_publisher,
+        )
+        return SubmissionArtifactAnalysisStartResponse(
+            submission_id=submission.id,
+            job_id=created.analysis_job.id,
+            job_type=created.analysis_job.job_type,
+            status=created.analysis_job.status,
+            queued=created.queued,
+            sqs_message_id=created.analysis_job.sqs_message_id,
+        )
+
+    # In-process path: run Phase 1/2/3 inside the API and stream live progress
+    # via the AnalysisRunStore, so the frontend can poll /runs/{run_id}.
+    job = AnalysisJob(
+        submission_id=submission.id,
         job_type="git_analysis",
-        queue_publisher=queue_publisher,
+        status="running",
     )
+    submission.status = "running"
+    submission.error_message = None
+    session.add(job)
+    session.commit()
+    session.refresh(job)
+
+    github_service = GitHubService(
+        api_base_url=settings.github_api_base_url,
+        request_timeout_seconds=settings.request_timeout_seconds,
+        github_token=settings.github_token,
+        cache_dir=settings.output_dir / "file_cache",
+    )
+    context_builder = ContextBuilder(output_dir=settings.output_dir)
+    filter_service = FilterService(max_file_size_bytes=settings.max_file_size_bytes)
+    tree_analysis_service = create_tree_analysis_service(
+        settings,
+        preview_fetcher=github_service.get_file_preview,
+    )
+    repository_analysis_service = create_repository_analysis_service(
+        settings,
+        preview_fetcher=github_service.get_file_preview,
+    )
+
+    job_id = job.id
+    submission_id_value = submission.id
+
+    async def on_finish(final_state: AnalysisRunState) -> None:
+        await _persist_inprocess_git_run(submission_id_value, job_id, final_state)
+
+    run_state = await run_service.start_run(
+        AnalyzeRequest(repo_url=submission.repo_url, branch=submission.branch),
+        github_service=github_service,
+        filter_service=filter_service,
+        context_builder=context_builder,
+        tree_analysis_service=tree_analysis_service,
+        repository_analysis_service=repository_analysis_service,
+        on_finish=on_finish,
+    )
+
     return SubmissionArtifactAnalysisStartResponse(
         submission_id=submission.id,
-        job_id=created.analysis_job.id,
-        job_type=created.analysis_job.job_type,
-        status=created.analysis_job.status,
-        queued=created.queued,
-        sqs_message_id=created.analysis_job.sqs_message_id,
+        job_id=job.id,
+        job_type="git_analysis",
+        status="running",
+        queued=False,
+        sqs_message_id=None,
+        run_id=run_state.id,
     )
+
+
+async def _persist_inprocess_git_run(
+    submission_id: str,
+    job_id: str,
+    final_state: AnalysisRunState,
+) -> None:
+    """Mirror the worker's _save_feedback for in-process git runs."""
+
+    import asyncio
+    from datetime import datetime, timezone
+
+    def _write() -> None:
+        session_factory = get_session_factory()
+        with session_factory() as session:
+            job = session.get(AnalysisJob, job_id)
+            submission = session.get(Submission, submission_id)
+            if job is None or submission is None:
+                return
+
+            now = datetime.now(timezone.utc)
+            if final_state.status == "completed" and final_state.result is not None:
+                repository_payload = final_state.result.model_dump(mode="json")
+                raw_result = {"repository": repository_payload}
+                report = submission.feedback_report
+                if report is None:
+                    report = FeedbackReport(submission_id=submission.id, raw_result={})
+                    session.add(report)
+                    session.flush()
+                merged = dict(report.raw_result or {})
+                merged.update(raw_result)
+                report.raw_result = merged
+                exec_summary = (
+                    repository_payload.get("repository_analysis", {}).get("executive_summary")
+                    if isinstance(repository_payload.get("repository_analysis"), dict)
+                    else None
+                )
+                report.summary = exec_summary or report.summary
+                session.add(report)
+
+                job.status = "completed"
+                job.result_json = raw_result
+                job.completed_at = now
+                job.error_message = None
+                submission.status = "completed"
+                submission.error_message = None
+            else:
+                error_message = final_state.error or "Repository analysis failed."
+                job.status = "failed"
+                job.error_message = error_message
+                job.result_json = {"error": error_message}
+                job.completed_at = now
+                submission.status = "failed"
+                submission.error_message = error_message
+
+            session.commit()
+
+    await asyncio.to_thread(_write)
 
 
 @router.post(
     "/{submission_id}/ppt-analysis/start",
     response_model=SubmissionArtifactAnalysisStartResponse,
 )
-def start_submission_ppt_analysis(
+async def start_submission_ppt_analysis(
     submission_id: str,
     session: Session = Depends(get_db_session),
     queue_publisher: SqsQueueService | None = Depends(get_queue_publisher),
+    settings: Settings = Depends(get_settings),
+    run_service: AnalysisRunService = Depends(get_analysis_run_service),
 ) -> SubmissionArtifactAnalysisStartResponse:
     submission = session.get(
         Submission,
@@ -204,35 +560,289 @@ def start_submission_ppt_analysis(
     if ppt_artifact is None:
         raise HTTPException(status_code=400, detail="No PPT/PDF artifact found for this submission.")
 
-    created = create_submission_analysis_job(
-        session,
-        submission,
+    if not settings.ppt_analysis_inprocess:
+        created = create_submission_analysis_job(
+            session,
+            submission,
+            job_type="ppt_analysis",
+            queue_publisher=queue_publisher,
+        )
+        return SubmissionArtifactAnalysisStartResponse(
+            submission_id=submission.id,
+            job_id=created.analysis_job.id,
+            job_type=created.analysis_job.job_type,
+            status=created.analysis_job.status,
+            queued=created.queued,
+            sqs_message_id=created.analysis_job.sqs_message_id,
+        )
+
+    job = AnalysisJob(
+        submission_id=submission.id,
         job_type="ppt_analysis",
-        queue_publisher=queue_publisher,
+        status="running",
     )
+    submission.status = "running"
+    submission.error_message = None
+    session.add(job)
+    session.commit()
+    session.refresh(job)
+
+    artifact_object_key = ppt_artifact.object_key
+    artifact_file_name = ppt_artifact.file_name
+    job_id = job.id
+    submission_id_value = submission.id
+    label = artifact_file_name or "presentation"
+
+    async def runner(reporter: RunProgressReporter) -> dict:
+        return await _run_ppt_in_process(
+            reporter,
+            settings,
+            artifact_object_key=artifact_object_key,
+            artifact_file_name=artifact_file_name,
+        )
+
+    async def on_finish(final_state: AnalysisRunState) -> None:
+        await _persist_inprocess_ppt_run(submission_id_value, job_id, final_state)
+
+    run_state = await run_service.start_simple_run(
+        kind="ppt",
+        phases=build_ppt_run_phases(),
+        runner=runner,
+        label=label,
+        on_finish=on_finish,
+    )
+
     return SubmissionArtifactAnalysisStartResponse(
         submission_id=submission.id,
-        job_id=created.analysis_job.id,
-        job_type=created.analysis_job.job_type,
-        status=created.analysis_job.status,
-        queued=created.queued,
-        sqs_message_id=created.analysis_job.sqs_message_id,
+        job_id=job.id,
+        job_type="ppt_analysis",
+        status="running",
+        queued=False,
+        sqs_message_id=None,
+        run_id=run_state.id,
     )
+
+
+async def _run_ppt_in_process(
+    reporter: RunProgressReporter,
+    settings: Settings,
+    *,
+    artifact_object_key: str,
+    artifact_file_name: str | None,
+) -> dict:
+    import asyncio
+    import tempfile
+    from pathlib import Path
+
+    suffix = Path(artifact_file_name or artifact_object_key).suffix
+    if suffix.lower() not in {".pptx", ".pdf"}:
+        suffix = ".pptx"
+
+    reporter.start_subtask("ppt", "download", "Downloading PPT/PDF from S3")
+    storage = S3StorageService(settings)
+    tmp = tempfile.NamedTemporaryFile(delete=False, suffix=suffix)
+    tmp.close()
+    try:
+        await asyncio.to_thread(storage.download_file, artifact_object_key, tmp.name)
+        reporter.complete_subtask(
+            "ppt",
+            "download",
+            f"Downloaded {artifact_file_name or artifact_object_key}",
+        )
+
+        reporter.start_subtask(
+            "ppt",
+            "extract",
+            "Slide text will be read on-demand by the rubric agent",
+        )
+        reporter.complete_subtask("ppt", "extract", "Extraction will run via the agent tool")
+
+        reporter.start_subtask("ppt", "score", "Scoring against rubric with Gemini")
+        with bind_crewai_run_context(
+            reporter,
+            phase_id="ppt",
+            default_subtask_id="score",
+        ):
+            result = await asyncio.to_thread(analyze_ppt, tmp.name)
+        reporter.complete_subtask("ppt", "score", "Scoring completed")
+    finally:
+        try:
+            Path(tmp.name).unlink(missing_ok=True)
+        except Exception:  # noqa: BLE001
+            pass
+
+    reporter.start_subtask("ppt", "save", "Saving feedback to the submission")
+    return {"ppt": result}
+
+
+async def _persist_inprocess_ppt_run(
+    submission_id: str,
+    job_id: str,
+    final_state: AnalysisRunState,
+) -> None:
+    import asyncio
+    from datetime import datetime, timezone
+
+    def _write() -> None:
+        session_factory = get_session_factory()
+        with session_factory() as session:
+            job = session.get(AnalysisJob, job_id)
+            submission = session.get(
+                Submission,
+                submission_id,
+                options=[selectinload(Submission.feedback_report)],
+            )
+            if job is None or submission is None:
+                return
+
+            now = datetime.now(timezone.utc)
+            reporter = RunProgressReporter(get_run_store(), final_state.id)
+
+            if final_state.status == "completed" and final_state.result_simple is not None:
+                ppt_payload = final_state.result_simple.get("ppt", {}) if isinstance(
+                    final_state.result_simple, dict
+                ) else {}
+                raw_result = {"ppt": ppt_payload}
+
+                report = submission.feedback_report
+                if report is None:
+                    report = FeedbackReport(submission_id=submission.id, raw_result={})
+                    session.add(report)
+                    session.flush()
+                merged = dict(report.raw_result or {})
+                merged.update(raw_result)
+                report.raw_result = merged
+                summary = (ppt_payload or {}).get("ppt_summary")
+                if summary:
+                    report.summary = summary
+                session.add(report)
+
+                rubric_by_category = builtin_ppt_rubric_by_category()
+                ppt_categories = set(rubric_by_category.keys())
+                for existing_score in list(report.scores):
+                    if existing_score.category in ppt_categories:
+                        session.delete(existing_score)
+                session.flush()
+
+                for score_item in (ppt_payload or {}).get("criteria_scores", []):
+                    if not isinstance(score_item, dict):
+                        continue
+                    category = str(score_item.get("category", "")).strip()
+                    if not category:
+                        continue
+                    rubric_item = rubric_by_category.get(category, {})
+                    session.add(
+                        FeedbackScore(
+                            feedback_report_id=report.id,
+                            category=category,
+                            score=score_item.get("score", 0) or 0,
+                            max_score=rubric_item.get("max_score"),
+                            comment=score_item.get("comment"),
+                        )
+                    )
+
+                job.status = "completed"
+                job.result_json = raw_result
+                job.completed_at = now
+                job.error_message = None
+                if submission.status != "failed":
+                    submission.status = "completed"
+                    submission.error_message = None
+                reporter.complete_subtask("ppt", "save", "Feedback saved to the submission")
+            else:
+                error_message = final_state.error or "PPT analysis failed."
+                job.status = "failed"
+                job.error_message = error_message
+                job.result_json = {"error": error_message}
+                job.completed_at = now
+                submission.status = "failed"
+                submission.error_message = error_message
+
+            session.commit()
+
+    await asyncio.to_thread(_write)
+
+
+async def _persist_inprocess_final_grading_run(
+    submission_id: str,
+    job_id: str,
+    *,
+    live_run_id: str,
+    final_state: AnalysisRunState,
+) -> None:
+    from datetime import datetime, timezone
+
+    def _write() -> None:
+        session_factory = get_session_factory()
+        with session_factory() as session:
+            job = session.get(AnalysisJob, job_id)
+            submission = session.get(
+                Submission,
+                submission_id,
+                options=[selectinload(Submission.feedback_report)],
+            )
+            if job is None or submission is None:
+                return
+
+            now = datetime.now(timezone.utc)
+            reporter = RunProgressReporter(get_run_store(), live_run_id)
+
+            if final_state.status == "completed" and final_state.result_simple is not None:
+                rs = final_state.result_simple
+                fg = rs.get("final_grading") if isinstance(rs, dict) else None
+                if not isinstance(fg, dict):
+                    error_message = "Final grading did not return structured output."
+                    job.status = "failed"
+                    job.error_message = error_message
+                    job.result_json = {"error": error_message}
+                    job.completed_at = now
+                    submission.status = "failed"
+                    submission.error_message = error_message
+                else:
+                    raw_result = {"final_grading": fg}
+                    _save_feedback(session, submission, raw_result)
+                    job.status = "completed"
+                    job.result_json = raw_result
+                    job.completed_at = now
+                    job.error_message = None
+                    if submission.status != "failed":
+                        submission.status = "completed"
+                        submission.error_message = None
+                    reporter.complete_subtask(
+                        "final",
+                        "save",
+                        "Final report saved to database",
+                    )
+            else:
+                error_message = final_state.error or "Final grading failed."
+                job.status = "failed"
+                job.error_message = error_message
+                job.result_json = {"error": error_message}
+                job.completed_at = now
+                submission.status = "failed"
+                submission.error_message = error_message
+
+            _refresh_submission_status(session, submission_id)
+            session.commit()
+
+    await asyncio.to_thread(_write)
 
 
 @router.post(
     "/{submission_id}/final-grading/start",
     response_model=SubmissionArtifactAnalysisStartResponse,
 )
-def start_submission_final_grading(
+async def start_submission_final_grading(
     submission_id: str,
     session: Session = Depends(get_db_session),
     queue_publisher: SqsQueueService | None = Depends(get_queue_publisher),
+    settings: Settings = Depends(get_settings),
+    run_service: AnalysisRunService = Depends(get_analysis_run_service),
 ) -> SubmissionArtifactAnalysisStartResponse:
     submission = session.get(
         Submission,
         submission_id,
-        options=[selectinload(Submission.analysis_jobs)],
+        options=[selectinload(Submission.analysis_jobs), selectinload(Submission.artifacts)],
     )
     if submission is None:
         raise HTTPException(status_code=404, detail="Submission not found.")
@@ -255,19 +865,123 @@ def start_submission_final_grading(
     if has_active_final_job:
         raise HTTPException(status_code=409, detail="A final grading job is already queued or running.")
 
-    created = create_submission_analysis_job(
-        session,
-        submission,
+    if not settings.final_grading_inprocess:
+        created = create_submission_analysis_job(
+            session,
+            submission,
+            job_type="final_grading_analysis",
+            queue_publisher=queue_publisher,
+        )
+        return SubmissionArtifactAnalysisStartResponse(
+            submission_id=submission.id,
+            job_id=created.analysis_job.id,
+            job_type=created.analysis_job.job_type,
+            status=created.analysis_job.status,
+            queued=created.queued,
+            sqs_message_id=created.analysis_job.sqs_message_id,
+        )
+
+    job = AnalysisJob(
+        submission_id=submission.id,
         job_type="final_grading_analysis",
-        queue_publisher=queue_publisher,
+        status="running",
     )
+    submission.status = "running"
+    submission.error_message = None
+    session.add(job)
+    session.commit()
+    session.refresh(job)
+
+    job_id = job.id
+    submission_id_value = submission.id
+    loop = asyncio.get_running_loop()
+
+    async def runner(reporter: RunProgressReporter) -> dict[str, Any]:
+        reporter.start_subtask(
+            "final",
+            "load_context",
+            "Loading rubric criteria and component analysis outputs…",
+        )
+
+        def on_context_ready() -> None:
+            def _bump() -> None:
+                reporter.complete_subtask(
+                    "final",
+                    "load_context",
+                    "Loaded criteria and latest component results",
+                )
+                reporter.start_subtask(
+                    "final",
+                    "crew_review",
+                    "Synthesizing final scores with CrewAI",
+                )
+
+            loop.call_soon_threadsafe(_bump)
+
+        def work() -> dict[str, Any]:
+            cm = bind_crewai_run_context(
+                reporter,
+                phase_id="final",
+                default_subtask_id="crew_review",
+                task_name_map={"final_grading": "crew_review"},
+            )
+            session_factory = get_session_factory()
+            with session_factory() as db_session:
+                sub = db_session.get(
+                    Submission,
+                    submission_id_value,
+                    options=[
+                        selectinload(Submission.artifacts),
+                        selectinload(Submission.analysis_jobs),
+                    ],
+                )
+                if sub is None:
+                    raise RuntimeError("Submission not found.")
+                return _run_final_grading_analysis(
+                    db_session,
+                    sub,
+                    settings,
+                    crew_context=cm,
+                    on_context_ready=on_context_ready,
+                )
+
+        payload = await asyncio.to_thread(work)
+        reporter.complete_subtask(
+            "final",
+            "crew_review",
+            "Final criterion scores generated",
+        )
+        reporter.start_subtask(
+            "final",
+            "save",
+            "Saving final grades to the submission…",
+        )
+        return {"final_grading": payload}
+
+    async def on_finish(final_state: AnalysisRunState) -> None:
+        await _persist_inprocess_final_grading_run(
+            submission_id_value,
+            job_id,
+            live_run_id=final_state.id,
+            final_state=final_state,
+        )
+
+    run_state = await run_service.start_simple_run(
+        kind="final",
+        phases=build_final_grading_run_phases(),
+        runner=runner,
+        label="final grading",
+        on_finish=on_finish,
+    )
+
     return SubmissionArtifactAnalysisStartResponse(
         submission_id=submission.id,
-        job_id=created.analysis_job.id,
-        job_type=created.analysis_job.job_type,
-        status=created.analysis_job.status,
-        queued=created.queued,
-        sqs_message_id=created.analysis_job.sqs_message_id,
+        job_id=job.id,
+        job_type="final_grading_analysis",
+        status="running",
+        queued=False,
+        sqs_message_id=None,
+        run_id=run_state.id,
     )
 
 

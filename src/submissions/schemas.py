@@ -72,6 +72,7 @@ class SubmissionArtifactAnalysisStartResponse(BaseModel):
     status: RunStatus
     queued: bool
     sqs_message_id: str | None = None
+    run_id: str | None = None
 
 
 class SubmissionArtifactResponse(BaseModel):

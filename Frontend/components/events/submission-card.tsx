@@ -4,6 +4,7 @@ import { useEffect } from "react";
 import { motion } from "framer-motion";
 import {
   GitBranch,
+  FileText,
   Clock,
   Loader2,
   CheckCircle2,
@@ -24,6 +25,19 @@ interface Props {
   eventId: string;
   isSelected?: boolean;
   onClick?: () => void;
+}
+
+function YouTubeGlyph({ className }: { className?: string }) {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      fill="currentColor"
+      aria-hidden="true"
+      className={className}
+    >
+      <path d="M23.5 6.2a3 3 0 0 0-2.1-2.1C19.6 3.5 12 3.5 12 3.5s-7.6 0-9.4.6A3 3 0 0 0 .5 6.2 31 31 0 0 0 0 12a31 31 0 0 0 .5 5.8 3 3 0 0 0 2.1 2.1c1.8.6 9.4.6 9.4.6s7.6 0 9.4-.6a3 3 0 0 0 2.1-2.1A31 31 0 0 0 24 12a31 31 0 0 0-.5-5.8ZM9.8 15.6V8.4l6.2 3.6-6.2 3.6Z" />
+    </svg>
+  );
 }
 
 export function SubmissionCard({ submission, eventId, isSelected = false, onClick }: Props) {
@@ -59,6 +73,9 @@ export function SubmissionCard({ submission, eventId, isSelected = false, onClic
   const donePhases  = run.phases.filter((p) => p.status === "completed").length;
   const progressPct = totalPhases > 0 ? (donePhases / totalPhases) * 100 : 0;
   const isRunning   = run.status === "running" || run.status === "queued";
+  const hasRepo = Boolean(submission.repoUrl?.trim());
+  const hasPpt = Boolean(submission.pptFileName);
+  const hasVideo = Boolean(submission.videoFileName || submission.videoObjectKey);
 
   return (
     <motion.button
@@ -88,6 +105,27 @@ export function SubmissionCard({ submission, eventId, isSelected = false, onClic
             <GitBranch className="h-3 w-3 text-neutral-600 shrink-0" />
             <span className="text-xs text-neutral-500 truncate">
               {shortUrl(submission.repoUrl)}
+            </span>
+          </div>
+          <div className="mt-1.5 flex items-center gap-2 text-[11px] text-neutral-500">
+            <span className="text-neutral-600">Artifacts:</span>
+            <span
+              className={cn("inline-flex items-center", hasRepo ? "text-neutral-300" : "text-neutral-700")}
+              title={hasRepo ? "Repository uploaded" : "Repository missing"}
+            >
+              <GitBranch className="h-3.5 w-3.5" />
+            </span>
+            <span
+              className={cn("inline-flex items-center", hasPpt ? "text-neutral-300" : "text-neutral-700")}
+              title={hasPpt ? "Presentation uploaded" : "Presentation missing"}
+            >
+              <FileText className="h-3.5 w-3.5" />
+            </span>
+            <span
+              className={cn("inline-flex items-center", hasVideo ? "text-red-400" : "text-neutral-700")}
+              title={hasVideo ? "Demo video uploaded" : "Demo video missing"}
+            >
+              <YouTubeGlyph className="h-3.5 w-3.5" />
             </span>
           </div>
         </div>

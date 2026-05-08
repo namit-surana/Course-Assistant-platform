@@ -106,7 +106,9 @@ export interface AnalysisRunState {
   id: string;
   revision: number;
   status: RunStatus;
-  request: CreateRunPayload;
+  kind?: "repo" | "ppt" | "video" | "final";
+  request?: CreateRunPayload | null;
+  label?: string | null;
   owner?: string | null;
   repo?: string | null;
   branch?: string | null;
@@ -115,6 +117,7 @@ export interface AnalysisRunState {
   phases: RunPhaseState[];
   events: RunEventState[];
   result?: AnalyzeResponse | null;
+  result_simple?: Record<string, unknown> | null;
   markdown_report_content?: string | null;
   started_at?: string;
   updated_at?: string;
@@ -185,6 +188,8 @@ export interface Submission {
   videoAnalysisResult?: WorkerVideoAnalysisJob | null;
   voiceStatus?: VoiceStatus;
   voiceTranscript?: VoiceTranscriptArtifact | null;
+  finalOverallScore?: number;
+  finalOverallMaxScore?: number;
   createdAt: string;
 }
 
@@ -299,6 +304,7 @@ export interface WorkerVideoAnalysisStartResponse {
   status: "pending" | "queued" | "running" | "completed" | "failed";
   queued: boolean;
   sqs_message_id?: string | null;
+  run_id?: string | null;
 }
 
 export interface WorkerVideoAnalysisJob {

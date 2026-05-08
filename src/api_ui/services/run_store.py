@@ -8,6 +8,8 @@ from src.api_ui.models.schemas import (
     ItemStatus,
     RunEventKind,
     RunEventState,
+    RunKind,
+    RunPhaseState,
     build_default_run_phases,
 )
 from src.api_ui.services.audit_log_service import AuditLogService
@@ -27,8 +29,21 @@ class AnalysisRunStore:
         self._event_ids: dict[str, int] = {}
         self._audit_log_service = audit_log_service
 
-    def create_run(self, request) -> AnalysisRunState:
-        run = AnalysisRunState(request=request, phases=build_default_run_phases())
+    def create_run(
+        self,
+        request,
+        *,
+        phases: list[RunPhaseState] | None = None,
+        kind: RunKind = "repo",
+        label: str | None = None,
+    ) -> AnalysisRunState:
+        resolved_phases = phases if phases is not None else build_default_run_phases()
+        run = AnalysisRunState(
+            request=request,
+            phases=resolved_phases,
+            kind=kind,
+            label=label,
+        )
         with self._lock:
             self._runs[run.id] = run
             self._event_ids[run.id] = 0
@@ -36,8 +51,9 @@ class AnalysisRunStore:
                 run.id,
                 "run-created",
                 {
+                    "kind": kind,
                     "status": run.status,
-                    "request": request.model_dump(mode="json"),
+                    "request": request.model_dump(mode="json") if request is not None else None,
                 },
             )
             return run.model_copy(deep=True)
@@ -185,6 +201,22 @@ class AnalysisRunStore:
                     "detail": detail,
                     "badges": badges or [],
                 },
+            )
+
+    def complete_run_simple(self, run_id: str, result: dict) -> None:
+        """Mark a non-github (PPT/video) run as completed with a generic dict result."""
+        with self._lock:
+            run = self._require_run(run_id)
+            run.status = "completed"
+            run.result_simple = result
+            run.current_activity = "Analysis completed"
+            run.completed_at = datetime.now(timezone.utc)
+            run.updated_at = run.completed_at
+            run.revision += 1
+            self._log(
+                run_id,
+                "run-completed",
+                {"status": run.status, "kind": run.kind},
             )
 
     def complete_run(self, run_id: str, result: AnalyzeResponse, markdown_report_content: str | None) -> None:
@@ -336,6 +368,9 @@ class RunProgressReporter:
 
     def complete_run(self, result: AnalyzeResponse, markdown_report_content: str | None) -> None:
         self.store.complete_run(self.run_id, result, markdown_report_content)
+
+    def complete_run_simple(self, result: dict) -> None:
+        self.store.complete_run_simple(self.run_id, result)
 
     def fail_run(self, error_message: str) -> None:
         self.store.fail_run(self.run_id, error_message)

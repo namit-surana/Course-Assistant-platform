@@ -70,6 +70,10 @@ class Settings(BaseSettings):
     )
     worker_enable_video_analysis: bool = Field(default=True, alias="WORKER_ENABLE_VIDEO_ANALYSIS")
     worker_job_type: str | None = Field(default=None, alias="WORKER_JOB_TYPE")
+    git_analysis_inprocess: bool = Field(default=True, alias="GIT_ANALYSIS_INPROCESS")
+    ppt_analysis_inprocess: bool = Field(default=True, alias="PPT_ANALYSIS_INPROCESS")
+    video_analysis_inprocess: bool = Field(default=True, alias="VIDEO_ANALYSIS_INPROCESS")
+    final_grading_inprocess: bool = Field(default=True, alias="FINAL_GRADING_INPROCESS")
 
     GEMINI_API_KEY: str | None = Field(default=None, alias="GEMINI_API_KEY")
     elevenlabs_api_key: str | None = Field(default=None, alias="ELEVENLABS_API_KEY")
