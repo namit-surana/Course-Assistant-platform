@@ -273,6 +273,7 @@ export function mapWorkerSubmissionToRun(
   detail: WorkerSubmissionDetail,
   previousRun: AnalysisRunState
 ): AnalysisRunState {
+  const previousRequest = previousRun.request ?? null;
   const repositoryResult = detail.feedback?.raw_result?.repository;
   const repositoryHasFindings = Boolean(repositoryResult?.repository_analysis);
   const repositoryError = repositoryResult?.error;
@@ -287,8 +288,8 @@ export function mapWorkerSubmissionToRun(
 
   return buildWorkerRun({
     id: previousRun.id,
-    repoUrl: detail.repo_url || previousRun.request.repo_url,
-    branch: detail.branch || previousRun.request.branch,
+    repoUrl: detail.repo_url || previousRequest?.repo_url || "",
+    branch: detail.branch || previousRequest?.branch,
     status: effectiveStatus,
     error: detail.error_message || repositoryError || undefined,
     activity: activityForStatus(effectiveStatus),
